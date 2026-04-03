@@ -1,0 +1,15 @@
+[Unit]
+Description=LaunchTV Fullscreen Media Launcher
+After=network.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=media
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/media/.Xauthority
+ExecStart=/usr/bin/xinit /usr/bin/python3 /home/media/Dev/LaunchTV/launchtvdesktop/launcher.py -- :0 vt1 -nolisten tcp
+Restart=on-failure
+
+[Install]
+WantedBy=graphical.target
