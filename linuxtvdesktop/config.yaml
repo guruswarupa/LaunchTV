@@ -1,0 +1,15 @@
+web_apps:
+  - name: "YouTube"
+    url: "https://www.youtube.com"
+    icon: "icons/youtube.png"
+
+native_apps:
+  - name: "Kodi"
+    cmd: "kodi"
+    icon: "icons/kodi.png"
+  - name: "Stremio"
+    cmd: "stremio"
+    icon: "icons/stremio.png"
+  - name: "VLC"
+    cmd: "vlc"
+    icon: "icons/vlc.png"

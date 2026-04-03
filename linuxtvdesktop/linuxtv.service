@@ -1,0 +1,16 @@
+[Unit]
+Description=LinuxTV Fullscreen Media Launcher
+After=network.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=msgs
+Environment=DISPLAY=:0
+Environment=LINUXTV_QT_BINDING=PyQt5
+Environment=XAUTHORITY=/home/msgs/.Xauthority
+ExecStart=/usr/bin/xinit /home/msgs/.linuxtv_venv/bin/python3 /home/msgs/LinuxTV/linuxtvdesktop/launcher.py -- :0 vt1 -nolisten tcp
+Restart=on-failure
+
+[Install]
+WantedBy=graphical.target
