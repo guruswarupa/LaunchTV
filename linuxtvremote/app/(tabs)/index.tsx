@@ -125,7 +125,12 @@ export default function RemoteScreen() {
   const [keyboardDraft, setKeyboardDraft] = useState('');
   const [volumeLevel, setVolumeLevel] = useState(50);
   const [isMuted, setIsMuted] = useState(false);
-  const [serverApps, setServerApps] = useState<Array<{id: string; name: string; icon?: string}>>([]);
+  const [serverApps, setServerApps] = useState<Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>>([]);
+  const [isAddAppVisible, setIsAddAppVisible] = useState(false);
+  const [newAppName, setNewAppName] = useState('');
+  const [newAppType, setNewAppType] = useState<'native' | 'web'>('native');
+  const [newAppCommand, setNewAppCommand] = useState('');
+  const [newAppUrl, setNewAppUrl] = useState('');
   const [repositoryState, setRepositoryState] = useState<ScreenRepositoryState>(
     DEFAULT_REPOSITORY_STATE
   );
@@ -416,6 +421,72 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const addNewApp = () => {
+    if (!newAppName.trim()) {
+      Alert.alert('Missing name', 'Please enter an app name.');
+      return;
+    }
+
+    if (newAppType === 'native' && !newAppCommand.trim()) {
+      Alert.alert('Missing command', 'Please enter the app command.');
+      return;
+    }
+
+    if (newAppType === 'web' && !newAppUrl.trim()) {
+      Alert.alert('Missing URL', 'Please enter the app URL.');
+      return;
+    }
+
+    const appData = {
+      type: 'add_app',
+      kind: newAppType,
+      name: newAppName.trim(),
+      ...(newAppType === 'native' ? { command: newAppCommand.trim() } : { url: newAppUrl.trim() }),
+    };
+
+    repositoryRef.current?.sendAction(JSON.stringify(appData));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    // Reset form
+    setNewAppName('');
+    setNewAppCommand('');
+    setNewAppUrl('');
+    setIsAddAppVisible(false);
+    
+    Alert.alert('App Added', 'The app has been added to LinuxTV. Refresh the list to see it.');
+    
+    // Auto refresh after adding
+    setTimeout(() => fetchApps(), 1000);
+  };
+
+  const removeApp = (appId: string, appName: string) => {
+    Alert.alert(
+      'Remove App',
+      `Are you sure you want to remove "${appName}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            const appData = {
+              type: 'remove_app',
+              id: appId,
+            };
+
+            repositoryRef.current?.sendAction(JSON.stringify(appData));
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            
+            Alert.alert('App Removed', `"${appName}" has been removed.`);
+            
+            // Auto refresh after removing
+            setTimeout(() => fetchApps(), 1000);
+          },
+        },
+      ]
+    );
+  };
+
   const adjustVolume = (direction: 'up' | 'down') => {
     if (direction === 'up') {
       setVolumeLevel(prev => Math.min(prev + 5, 100));
@@ -615,7 +686,7 @@ export default function RemoteScreen() {
   const showLoginScreen = !hasSavedSetup;
   const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
   const tabItems: { key: TabType; label: string; icon: ComponentProps<typeof Ionicons>['name'] }[] = [
-    { key: 'remote', label: 'Remote', icon: 'cellular' },
+    { key: 'remote', label: 'Remote', icon: 'radio-button-on' },
     { key: 'apps', label: 'Apps', icon: 'grid' },
     { key: 'keyboard', label: 'Keyboard', icon: 'text' },
     { key: 'touchpad', label: 'Touchpad', icon: 'hand-left' },
@@ -842,115 +913,106 @@ export default function RemoteScreen() {
                   </View>
 
                   {/* Navigation Buttons */}
-                  <View style={styles.buttonGroup}>
-                    <Text style={styles.groupLabel}>Navigation</Text>
-                    <View style={styles.actionButtonsRow}>
-                      <ControlButton
-                        icon="arrow-back"
-                        label="Back"
-                        onPress={() => {
-                          sendAction('BACK');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={styles.actionButtonSmall}
-                        textStyle={styles.actionButtonText}
-                      />
-                      <ControlButton
-                        icon="home"
-                        label="Home"
-                        onPress={() => {
-                          sendAction('HOME');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={styles.actionButtonSmall}
-                        textStyle={styles.actionButtonText}
-                      />
-                      <ControlButton
-                        icon="menu"
-                        label="Menu"
-                        onPress={() => {
-                          sendAction('MENU');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={styles.actionButtonSmall}
-                        textStyle={styles.actionButtonText}
-                      />
-                    </View>
+                  <View style={styles.actionButtonsRow}>
+                    <ControlButton
+                      icon="arrow-back"
+                      label="Back"
+                      onPress={() => {
+                        sendAction('BACK');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
+                    <ControlButton
+                      icon="home"
+                      label="Home"
+                      onPress={() => {
+                        sendAction('HOME');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
+                    <ControlButton
+                      icon="menu"
+                      label="Menu"
+                      onPress={() => {
+                        sendAction('MENU');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
                   </View>
 
                   {/* Media Controls */}
-                  <View style={styles.buttonGroup}>
-                    <Text style={styles.groupLabel}>Media</Text>
-                    <View style={styles.actionButtonsRow}>
-                      <ControlButton
-                        icon="close"
-                        label="Close"
-                        onPress={() => {
-                          sendAction('CLOSE_APP');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={[styles.actionButtonSmall, styles.closeButtonSmall]}
-                        textStyle={styles.closeButtonTextSmall}
-                      />
-                      <ControlButton
-                        icon={repositoryState.lastAction === 'PLAY_PAUSE' ? "pause" : "play"}
-                        label="Play"
-                        onPress={() => {
-                          sendAction('PLAY_PAUSE');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        }}
-                        style={[styles.actionButtonSmall, styles.playButtonSmall]}
-                        textStyle={styles.playButtonTextSmall}
-                      />
-                      <ControlButton
-                        icon="information-circle"
-                        label="Info"
-                        onPress={() => {
-                          sendAction('INFO');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        style={styles.actionButtonSmall}
-                        textStyle={styles.actionButtonText}
-                      />
-                    </View>
+                  <View style={styles.actionButtonsRow}>
+                    <ControlButton
+                      icon="close"
+                      label="Close"
+                      onPress={() => {
+                        sendAction('CLOSE_APP');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={[styles.actionButtonSmall, styles.closeButtonSmall]}
+                      textStyle={styles.closeButtonTextSmall}
+                    />
+                    <ControlButton
+                      icon={repositoryState.lastAction === 'PLAY_PAUSE' ? "pause" : "play"}
+                      label="Play"
+                      onPress={() => {
+                        sendAction('PLAY_PAUSE');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }}
+                      style={[styles.actionButtonSmall, styles.playButtonSmall]}
+                      textStyle={styles.playButtonTextSmall}
+                    />
+                    <ControlButton
+                      icon="information-circle"
+                      label="Info"
+                      onPress={() => {
+                        sendAction('INFO');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
                   </View>
 
                   {/* Volume Controls */}
-                  <View style={styles.buttonGroup}>
-                    <Text style={styles.groupLabel}>Volume</Text>
-                    <View style={styles.volumeContainer}>
-                      <View style={styles.volumeSliderRow}>
-                        <Ionicons name="volume-low" size={24} color="#8b949e" />
-                        <View style={styles.sliderContainer}>
-                          <View style={styles.sliderTrack}>
-                            <View style={[styles.sliderFill, { width: `${volumeLevel}%` }]} />
-                          </View>
-                          <View style={styles.sliderButtons}>
-                            <Pressable
-                              style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                              onPress={() => adjustVolume('down')}>
-                              <Ionicons name="remove" size={24} color="#f0f6fc" />
-                            </Pressable>
-                            <Pressable
-                              style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                              onPress={() => adjustVolume('up')}>
-                              <Ionicons name="add" size={24} color="#f0f6fc" />
-                            </Pressable>
-                          </View>
+                  <View style={styles.volumeContainer}>
+                    <View style={styles.volumeSliderRow}>
+                      <Ionicons name="volume-low" size={24} color="#8b949e" />
+                      <View style={styles.sliderContainer}>
+                        <View style={styles.sliderTrack}>
+                          <View style={[styles.sliderFill, { width: `${volumeLevel}%` }]} />
                         </View>
-                        <Ionicons name="volume-high" size={24} color="#8b949e" />
+                        <View style={styles.sliderButtons}>
+                          <Pressable
+                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                            onPress={() => adjustVolume('down')}>
+                            <Ionicons name="remove" size={24} color="#f0f6fc" />
+                          </Pressable>
+                          <Pressable
+                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                            onPress={() => adjustVolume('up')}>
+                            <Ionicons name="add" size={24} color="#f0f6fc" />
+                          </Pressable>
+                        </View>
                       </View>
-                      <Pressable
-                        style={({ pressed }) => [styles.muteButtonFull, pressed && styles.pressed]}
-                        onPress={toggleMute}>
-                        <Ionicons 
-                          name={isMuted ? "volume-mute" : "volume-high"} 
-                          size={24} 
-                          color="#ffffff" 
-                        />
-                        <Text style={styles.muteButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-                      </Pressable>
+                      <Ionicons name="volume-high" size={24} color="#8b949e" />
                     </View>
+                    <Pressable
+                      style={({ pressed }) => [styles.muteButtonFull, pressed && styles.pressed]}
+                      onPress={toggleMute}>
+                      <Ionicons 
+                        name={isMuted ? "volume-mute" : "volume-high"} 
+                        size={24} 
+                        color="#ffffff" 
+                      />
+                      <Text style={styles.muteButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+                    </Pressable>
                   </View>
                 </View>
               </ScrollView>
@@ -964,30 +1026,161 @@ export default function RemoteScreen() {
                 <View style={styles.appsContainer}>
                   <View style={styles.appsHeader}>
                     <Text style={styles.appsTitle}>Apps</Text>
-                    <Pressable
-                      style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
-                      onPress={fetchApps}>
-                      <Ionicons name="refresh" size={20} color="#58a6ff" />
-                    </Pressable>
+                    <View style={styles.appsHeaderButtons}>
+                      <Pressable
+                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                        onPress={() => setIsAddAppVisible(!isAddAppVisible)}>
+                        <Ionicons name="add-circle" size={20} color="#3fb950" />
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                        onPress={fetchApps}>
+                        <Ionicons name="refresh" size={20} color="#58a6ff" />
+                      </Pressable>
+                    </View>
                   </View>
                   <Text style={styles.appsSubtitle}>Tap an app to launch it on LinuxTV</Text>
                   
+                  {isAddAppVisible && (
+                    <View style={styles.addAppForm}>
+                      <Text style={styles.addAppTitle}>Add New App</Text>
+                      
+                      <TextInput
+                        style={styles.appInput}
+                        placeholder="App Name"
+                        placeholderTextColor="#8b949e"
+                        value={newAppName}
+                        onChangeText={setNewAppName}
+                      />
+                      
+                      <View style={styles.appTypeSelector}>
+                        <Pressable
+                          style={[styles.appTypeButton, newAppType === 'native' && styles.appTypeButtonActive]}
+                          onPress={() => setNewAppType('native')}>
+                          <Ionicons name="desktop" size={16} color={newAppType === 'native' ? '#58a6ff' : '#8b949e'} />
+                          <Text style={[styles.appTypeText, newAppType === 'native' && styles.appTypeTextActive]}>
+                            Native
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.appTypeButton, newAppType === 'web' && styles.appTypeButtonActive]}
+                          onPress={() => setNewAppType('web')}>
+                          <Ionicons name="globe" size={16} color={newAppType === 'web' ? '#58a6ff' : '#8b949e'} />
+                          <Text style={[styles.appTypeText, newAppType === 'web' && styles.appTypeTextActive]}>
+                            Web
+                          </Text>
+                        </Pressable>
+                      </View>
+                      
+                      {newAppType === 'native' ? (
+                        <TextInput
+                          style={styles.appInput}
+                          placeholder="Command (e.g., vlc, firefox)"
+                          placeholderTextColor="#8b949e"
+                          value={newAppCommand}
+                          onChangeText={setNewAppCommand}
+                        />
+                      ) : (
+                        <TextInput
+                          style={styles.appInput}
+                          placeholder="URL (e.g., https://youtube.com)"
+                          placeholderTextColor="#8b949e"
+                          value={newAppUrl}
+                          onChangeText={setNewAppUrl}
+                          keyboardType="url"
+                          autoCapitalize="none"
+                        />
+                      )}
+                      
+                      <View style={styles.addAppButtons}>
+                        <Pressable
+                          style={[styles.addAppActionButton, styles.cancelButton]}
+                          onPress={() => setIsAddAppVisible(false)}>
+                          <Text style={styles.cancelButtonText}>Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          style={[styles.addAppActionButton, styles.saveButton]}
+                          onPress={addNewApp}>
+                          <Text style={styles.saveButtonText}>Add App</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                  
                   <View style={styles.appsGrid}>
-                    {serverApps.map((app) => (
-                      <Pressable
-                        key={app.id}
-                        style={({ pressed }) => [styles.appCard, pressed && styles.pressed]}
-                        onPress={() => launchApp(app.id)}>
-                        <View style={styles.appIcon}>
-                          <Ionicons 
-                            name={(app.icon as any) || 'application'} 
-                            size={32} 
-                            color="#58a6ff" 
-                          />
+                    {/* Native Apps Section */}
+                    {serverApps.filter(app => app.kind === 'native').length > 0 && (
+                      <>
+                        <View style={styles.sectionHeader}>
+                          <Ionicons name="desktop" size={18} color="#58a6ff" />
+                          <Text style={styles.sectionTitle}>Native Apps</Text>
                         </View>
-                        <Text style={styles.appName}>{app.name}</Text>
-                      </Pressable>
-                    ))}
+                        {serverApps
+                          .filter(app => app.kind === 'native')
+                          .map((app) => (
+                            <Pressable
+                              key={app.id}
+                              style={({ pressed }) => [styles.appCard, pressed && styles.pressed]}>
+                              <Pressable
+                                style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+                                onPress={() => removeApp(app.id, app.name)}>
+                                <Ionicons name="trash" size={16} color="#f85149" />
+                              </Pressable>
+                              <Pressable
+                                style={styles.appCardContent}
+                                onPress={() => launchApp(app.id)}>
+                                <View style={styles.appIconContainer}>
+                                  <View style={styles.appIconCircle}>
+                                    <Ionicons 
+                                      name="desktop" 
+                                      size={28} 
+                                      color="#58a6ff" 
+                                    />
+                                  </View>
+                                </View>
+                                <Text style={styles.appName}>{app.name}</Text>
+                              </Pressable>
+                            </Pressable>
+                          ))}
+                      </>
+                    )}
+                    
+                    {/* Web Apps Section */}
+                    {serverApps.filter(app => app.kind === 'web').length > 0 && (
+                      <>
+                        <View style={styles.sectionHeader}>
+                          <Ionicons name="globe" size={18} color="#58a6ff" />
+                          <Text style={styles.sectionTitle}>Web Apps</Text>
+                        </View>
+                        {serverApps
+                          .filter(app => app.kind === 'web')
+                          .map((app) => (
+                            <Pressable
+                              key={app.id}
+                              style={({ pressed }) => [styles.appCard, pressed && styles.pressed]}>
+                              <Pressable
+                                style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+                                onPress={() => removeApp(app.id, app.name)}>
+                                <Ionicons name="trash" size={16} color="#f85149" />
+                              </Pressable>
+                              <Pressable
+                                style={styles.appCardContent}
+                                onPress={() => launchApp(app.id)}>
+                                <View style={styles.appIconContainer}>
+                                  <View style={styles.appIconCircle}>
+                                    <Ionicons 
+                                      name="globe" 
+                                      size={28} 
+                                      color="#58a6ff" 
+                                    />
+                                  </View>
+                                </View>
+                                <Text style={styles.appName}>{app.name}</Text>
+                              </Pressable>
+                            </Pressable>
+                          ))}
+                      </>
+                    )}
                   </View>
                   
                   {serverApps.length === 0 && (
@@ -1518,6 +1711,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
+  appsHeaderButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   appsTitle: {
     color: '#f0f6fc',
     fontSize: 24,
@@ -1539,33 +1736,78 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   appsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 12,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 4,
+  },
+  sectionTitle: {
+    color: '#58a6ff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   appCard: {
-    width: 'calc(50% - 6px)',
+    width: '100%',
     backgroundColor: '#161b22',
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#30363d',
-    padding: 20,
-    alignItems: 'center',
-    gap: 12,
+    padding: 12,
+    position: 'relative',
   },
-  appIcon: {
-    width: 64,
-    height: 64,
+  deleteButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 32,
+    height: 32,
     borderRadius: 16,
+    backgroundColor: '#0d1117',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  appCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    padding: 8,
+  },
+  appIconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  appIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#21262d',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#30363d',
   },
   appName: {
     color: '#f0f6fc',
     fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  appCategory: {
+    color: '#8b949e',
+    fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   emptyApps: {
     alignItems: 'center',
@@ -1581,6 +1823,87 @@ const styles = StyleSheet.create({
   emptyAppsSubtext: {
     color: '#8b949e',
     fontSize: 13,
+  },
+  addAppForm: {
+    backgroundColor: '#161b22',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    padding: 16,
+    marginBottom: 16,
+    gap: 12,
+  },
+  addAppTitle: {
+    color: '#f0f6fc',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  appInput: {
+    backgroundColor: '#0d1117',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    padding: 14,
+    color: '#f0f6fc',
+    fontSize: 15,
+  },
+  appTypeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  appTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#0d1117',
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  appTypeButtonActive: {
+    backgroundColor: '#21262d',
+    borderColor: '#58a6ff',
+  },
+  appTypeText: {
+    color: '#8b949e',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  appTypeTextActive: {
+    color: '#58a6ff',
+  },
+  addAppButtons: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  addAppActionButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  cancelButtonText: {
+    color: '#8b949e',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  saveButton: {
+    backgroundColor: '#238636',
+  },
+  saveButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
   dpadContainer: {
     alignItems: 'center',

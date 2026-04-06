@@ -954,6 +954,50 @@ class WebSocketControlServer(threading.Thread):
                     }))
                     continue
 
+                # Handle add app request
+                if message_type == "add_app":
+                    app_kind = str(payload.get("kind", ""))
+                    app_name = str(payload.get("name", "")).strip()
+                    
+                    if not app_name:
+                        await websocket.send(json.dumps({"status": "error", "error": "app name required"}))
+                        continue
+                    
+                    if app_kind == "native":
+                        app_command = str(payload.get("command", "")).strip()
+                        if not app_command:
+                            await websocket.send(json.dumps({"status": "error", "error": "command required for native app"}))
+                            continue
+                        
+                        self.window.add_native_app(app_name, app_command)
+                        logging.info("Added native app: %s (%s)", app_name, app_command)
+                        
+                    elif app_kind == "web":
+                        app_url = str(payload.get("url", "")).strip()
+                        if not app_url:
+                            await websocket.send(json.dumps({"status": "error", "error": "url required for web app"}))
+                            continue
+                        
+                        self.window.add_web_app(app_name, app_url)
+                        logging.info("Added web app: %s (%s)", app_name, app_url)
+                    
+                    await websocket.send(json.dumps({"status": "ok", "type": "app_added"}))
+                    continue
+
+                # Handle remove app request
+                if message_type == "remove_app":
+                    app_id = str(payload.get("id", "")).strip()
+                    
+                    if not app_id:
+                        await websocket.send(json.dumps({"status": "error", "error": "app id required"}))
+                        continue
+                    
+                    self.window.remove_app_by_id(app_id)
+                    logging.info("Removed app: %s", app_id)
+                    
+                    await websocket.send(json.dumps({"status": "ok", "type": "app_removed"}))
+                    continue
+
                 # Handle app launch request
                 action = str(payload.get("action", ""))
                 if action.startswith("LAUNCH_APP:"):
@@ -2124,6 +2168,62 @@ class LauncherWindow(QMainWindow):
         
         logging.warning("App not found: %s", app_id)
 
+    def add_native_app(self, name: str, command: str):
+        """Add a native app to config and save it"""
+        native_apps = self.config.get("native_apps", [])
+        native_apps.append({
+            "name": name,
+            "cmd": command
+        })
+        self.config["native_apps"] = native_apps
+        save_config(self.config_path, self.config)
+        
+        # Refresh tiles to show the new app
+        QTimer.singleShot(500, self.populate_tiles)
+
+    def add_web_app(self, name: str, url: str):
+        """Add a web app to config and save it"""
+        web_apps = self.config.get("web_apps", [])
+        web_apps.append({
+            "name": name,
+            "url": url
+        })
+        self.config["web_apps"] = web_apps
+        save_config(self.config_path, self.config)
+        
+        # Refresh tiles to show the new app
+        QTimer.singleShot(500, self.populate_tiles)
+
+    def remove_app_by_id(self, app_id: str):
+        """Remove an app by its ID from config"""
+        app_id_normalized = app_id.lower().replace(" ", "_")
+        
+        # Try to remove from native apps
+        native_apps = self.config.get("native_apps", [])
+        for i, app in enumerate(native_apps):
+            item_id = app.get("id", app.get("name", "")).lower().replace(" ", "_")
+            if item_id == app_id_normalized:
+                native_apps.pop(i)
+                self.config["native_apps"] = native_apps
+                save_config(self.config_path, self.config)
+                logging.info("Removed native app: %s", app.get("name"))
+                QTimer.singleShot(500, self.populate_tiles)
+                return
+        
+        # Try to remove from web apps
+        web_apps = self.config.get("web_apps", [])
+        for i, app in enumerate(web_apps):
+            item_id = app.get("id", app.get("name", "")).lower().replace(" ", "_")
+            if item_id == app_id_normalized:
+                web_apps.pop(i)
+                self.config["web_apps"] = web_apps
+                save_config(self.config_path, self.config)
+                logging.info("Removed web app: %s", app.get("name"))
+                QTimer.singleShot(500, self.populate_tiles)
+                return
+        
+        logging.warning("App not found for removal: %s", app_id)
+
     def get_launchable_entries(self):
         entries = []
         for _, category_entries in self.get_categorized_entries():
@@ -2809,19 +2909,50 @@ class LauncherWindow(QMainWindow):
             return
 
     def close_active_app(self):
-        if not self.active_process or self.active_process.poll() is not None:
-            logging.info("No active app to close")
-            return
-
-        logging.info("Closing active app %s (pid=%s)", self.active_process_name, self.active_process.pid)
-        try:
-            os.killpg(self.active_process.pid, signal.SIGTERM)
-        except Exception:
-            logging.exception("Failed to terminate active app process group")
+        # First try to close the tracked active process
+        if self.active_process and self.active_process.poll() is None:
+            logging.info("Closing tracked active app %s (pid=%s)", self.active_process_name, self.active_process.pid)
             try:
-                self.active_process.terminate()
+                os.killpg(self.active_process.pid, signal.SIGTERM)
+                self.finish_active_process()
+                return
             except Exception:
-                logging.exception("Failed to terminate active app directly")
+                logging.exception("Failed to terminate active app process group, trying xdotool")
+                try:
+                    self.active_process.terminate()
+                    self.finish_active_process()
+                    return
+                except Exception:
+                    logging.exception("Failed to terminate active app directly, trying xdotool")
+        
+        # If no tracked process or termination failed, try to close the active window
+        logging.info("No tracked process or process already exited, trying to close active window")
+        xdotool, active_window = self.active_system_window()
+        
+        if xdotool and active_window:
+            # Don't close the launcher window itself
+            if active_window in self.launcher_window_ids():
+                logging.info("Active window is the launcher, showing launcher")
+                self.show()
+                self.raise_()
+                self.activateWindow()
+                return
+            
+            logging.info("Closing active window %s using xdotool", active_window)
+            try:
+                # Try to close the window gracefully
+                subprocess.run([xdotool, "windowclose", active_window], check=False, timeout=3)
+                
+                # Also try sending Alt+F4 as fallback
+                time.sleep(0.2)
+                subprocess.run([xdotool, "key", "alt+F4"], check=False, timeout=3)
+                
+                # Clear the tracked process since we're closing via window
+                self.finish_active_process()
+            except Exception as e:
+                logging.exception("Failed to close active window: %s", e)
+        else:
+            logging.warning("No active process or window found to close")
 
     def check_active_process(self):
         if not self.active_process:
