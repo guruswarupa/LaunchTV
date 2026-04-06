@@ -38,6 +38,7 @@ const DEMO_MODE_KEY = 'linuxtv_remote_demo_mode';
 const SYSTEMS_KEY = 'linuxtv_remote_systems';
 const ACTIVE_SYSTEM_ID_KEY = 'linuxtv_remote_active_system_id';
 const DEFAULT_PORT = '8765';
+const DEFAULT_KODI_PORT = '8080';
 const REMOTE_REPEAT_DELAY_MS = 320;
 const REMOTE_REPEAT_INTERVAL_MS = 90;
 
@@ -46,11 +47,26 @@ type ScreenRepositoryState = RepositoryState & {
   status: ConnectionState;
 };
 
-type TabType = 'remote' | 'keyboard' | 'touchpad' | 'apps';
+type TabType = 'remote' | 'keyboard' | 'touchpad' | 'apps' | 'kodi';
+
+type KodiChannel = {
+  channelid: number;
+  channelnumber: string;
+  label: string;
+  thumbnail?: string;
+};
+
+type KodiChannelGroup = {
+  channelgroupid: number | string;
+  label: string;
+};
 
 type SavedSystem = {
   id: string;
   ipAddress: string;
+  kodiPassword: string;
+  kodiPort: string;
+  kodiUsername: string;
   name: string;
   password: string;
   port: string;
@@ -69,6 +85,28 @@ const DEFAULT_REPOSITORY_STATE: ScreenRepositoryState = {
 const createSystemId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const buildSystemName = (name: string, ipAddress: string) => name.trim() || ipAddress.trim();
+
+const encodeBase64 = (value: string) => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+
+  for (let index = 0; index < value.length; index += 3) {
+    const byte1 = value.charCodeAt(index);
+    const hasByte2 = index + 1 < value.length;
+    const hasByte3 = index + 2 < value.length;
+    const byte2 = hasByte2 ? value.charCodeAt(index + 1) : 0;
+    const byte3 = hasByte3 ? value.charCodeAt(index + 2) : 0;
+
+    const chunk = (byte1 << 16) | (byte2 << 8) | byte3;
+
+    output += chars[(chunk >> 18) & 63];
+    output += chars[(chunk >> 12) & 63];
+    output += hasByte2 ? chars[(chunk >> 6) & 63] : '=';
+    output += hasByte3 ? chars[chunk & 63] : '=';
+  }
+
+  return output;
+};
 
 const parseStoredSystems = (storedValue: string | null): SavedSystem[] => {
   if (!storedValue) {
@@ -96,6 +134,9 @@ const parseStoredSystems = (storedValue: string | null): SavedSystem[] => {
         return {
           id: candidate.id?.trim() || createSystemId(),
           ipAddress,
+          kodiPassword: candidate.kodiPassword ?? '',
+          kodiPort: candidate.kodiPort?.trim() || DEFAULT_KODI_PORT,
+          kodiUsername: candidate.kodiUsername ?? '',
           name: buildSystemName(candidate.name ?? '', ipAddress),
           password: candidate.password ?? '',
           port: candidate.port?.trim() || DEFAULT_PORT,
@@ -114,6 +155,9 @@ export default function RemoteScreen() {
   const [port, setPort] = useState(DEFAULT_PORT);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [kodiPort, setKodiPort] = useState(DEFAULT_KODI_PORT);
+  const [kodiUsername, setKodiUsername] = useState('');
+  const [kodiPassword, setKodiPassword] = useState('');
   const [savedSystems, setSavedSystems] = useState<SavedSystem[]>([]);
   const [activeSystemId, setActiveSystemId] = useState<string | null>(null);
   const [editingSystemId, setEditingSystemId] = useState<string | null>(null);
@@ -125,12 +169,24 @@ export default function RemoteScreen() {
   const [keyboardDraft, setKeyboardDraft] = useState('');
   const [volumeLevel, setVolumeLevel] = useState(50);
   const [isMuted, setIsMuted] = useState(false);
-  const [serverApps, setServerApps] = useState<Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>>([]);
+  const [serverApps, setServerApps] = useState<
+    { id: string; name: string; icon?: string; kind?: string; category?: string }[]
+  >([]);
   const [isAddAppVisible, setIsAddAppVisible] = useState(false);
   const [newAppName, setNewAppName] = useState('');
   const [newAppType, setNewAppType] = useState<'native' | 'web'>('native');
   const [newAppCommand, setNewAppCommand] = useState('');
   const [newAppUrl, setNewAppUrl] = useState('');
+  const [kodiSearchQuery, setKodiSearchQuery] = useState('');
+  const [isKodiAuthVisible, setIsKodiAuthVisible] = useState(false);
+  const [kodiAuthPort, setKodiAuthPort] = useState(DEFAULT_KODI_PORT);
+  const [kodiAuthUsername, setKodiAuthUsername] = useState('');
+  const [kodiAuthPassword, setKodiAuthPassword] = useState('');
+  const [kodiGroups, setKodiGroups] = useState<KodiChannelGroup[]>([]);
+  const [kodiChannels, setKodiChannels] = useState<KodiChannel[]>([]);
+  const [selectedKodiGroup, setSelectedKodiGroup] = useState<KodiChannelGroup | null>(null);
+  const [isKodiLoading, setIsKodiLoading] = useState(false);
+  const [kodiError, setKodiError] = useState<string | null>(null);
   const [repositoryState, setRepositoryState] = useState<ScreenRepositoryState>(
     DEFAULT_REPOSITORY_STATE
   );
@@ -169,6 +225,36 @@ export default function RemoteScreen() {
     setPort(system?.port ?? DEFAULT_PORT);
     setUsername(system?.username ?? '');
     setPassword(system?.password ?? '');
+    setKodiPort(system?.kodiPort ?? DEFAULT_KODI_PORT);
+    setKodiUsername(system?.kodiUsername ?? '');
+    setKodiPassword(system?.kodiPassword ?? '');
+  };
+
+  const getKodiRequestHeaders = (system: SavedSystem | null) => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    const kodiUser = system?.kodiUsername?.trim() ?? '';
+    const kodiPass = system?.kodiPassword ?? '';
+    if (kodiUser || kodiPass) {
+      headers.Authorization = `Basic ${encodeBase64(`${kodiUser}:${kodiPass}`)}`;
+    }
+
+    return headers;
+  };
+
+  const getKodiUrl = (system: SavedSystem | null) => {
+    const host = system?.ipAddress || 'localhost';
+    const kodiTargetPort = system?.kodiPort?.trim() || DEFAULT_KODI_PORT;
+    return `http://${host}:${kodiTargetPort}/jsonrpc`;
+  };
+
+  const openKodiAuthModal = () => {
+    setKodiAuthPort(activeSystem?.kodiPort ?? DEFAULT_KODI_PORT);
+    setKodiAuthUsername(activeSystem?.kodiUsername ?? '');
+    setKodiAuthPassword(activeSystem?.kodiPassword ?? '');
+    setIsKodiAuthVisible(true);
   };
 
   const persistSystems = async (systems: SavedSystem[], nextActiveSystemId?: string | null) => {
@@ -281,6 +367,8 @@ export default function RemoteScreen() {
     const cleanedIpAddress = ipAddress.trim();
     const cleanedPort = port.trim() || DEFAULT_PORT;
     const cleanedUsername = username.trim();
+    const cleanedKodiPort = kodiPort.trim() || DEFAULT_KODI_PORT;
+    const cleanedKodiUsername = kodiUsername.trim();
     const cleanedName = buildSystemName(systemName, cleanedIpAddress);
 
     if (!cleanedIpAddress) {
@@ -292,6 +380,9 @@ export default function RemoteScreen() {
     const nextSystem: SavedSystem = {
       id: systemId,
       ipAddress: cleanedIpAddress,
+      kodiPassword,
+      kodiPort: cleanedKodiPort,
+      kodiUsername: cleanedKodiUsername,
       name: cleanedName,
       password,
       port: cleanedPort,
@@ -421,6 +512,218 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const saveKodiAuthForActiveSystem = async () => {
+    if (!activeSystem) {
+      return null;
+    }
+
+    const nextSystem: SavedSystem = {
+      ...activeSystem,
+      kodiPassword: kodiAuthPassword,
+      kodiPort: kodiAuthPort.trim() || DEFAULT_KODI_PORT,
+      kodiUsername: kodiAuthUsername.trim(),
+    };
+
+    const nextSystems = savedSystems.map((system) =>
+      system.id === activeSystem.id ? nextSystem : system
+    );
+
+    setSavedSystems(nextSystems);
+    setKodiPort(nextSystem.kodiPort);
+    setKodiUsername(nextSystem.kodiUsername);
+    setKodiPassword(nextSystem.kodiPassword);
+    await persistSystems(nextSystems, nextSystem.id);
+    setIsKodiAuthVisible(false);
+
+    return nextSystem;
+  };
+
+  const fetchKodiGroups = async (systemOverride?: SavedSystem | null) => {
+    setIsKodiLoading(true);
+    setKodiError(null);
+
+    try {
+      const kodiSystem = systemOverride ?? activeSystem;
+      const kodiUrl = getKodiUrl(kodiSystem);
+      const response = await fetch(kodiUrl, {
+        method: 'POST',
+        headers: getKodiRequestHeaders(kodiSystem),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'PVR.GetChannelGroups',
+          params: { channeltype: 'tv' },
+          id: 1,
+        }),
+      });
+
+      if (response.status === 401) {
+        openKodiAuthModal();
+        throw new Error('Kodi authentication failed');
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to connect to Kodi');
+      }
+
+      const data = await response.json();
+      const groups = (data?.result?.channelgroups || []) as KodiChannelGroup[];
+      setSelectedKodiGroup(null);
+      setKodiChannels([]);
+      setKodiGroups(groups);
+
+      if (groups.length === 0) {
+        setKodiError('No channel folders found. Make sure PVR channel groups are available in Kodi.');
+      }
+    } catch (error) {
+      console.error('Error fetching Kodi groups:', error);
+      const message =
+        error instanceof Error && error.message === 'Kodi authentication failed'
+          ? 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.'
+          : 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      setKodiError(message);
+      setKodiGroups([]);
+      setKodiChannels([]);
+      setSelectedKodiGroup(null);
+    } finally {
+      setIsKodiLoading(false);
+    }
+  };
+
+  const fetchKodiChannels = async (
+    systemOverride?: SavedSystem | null,
+    groupOverride?: KodiChannelGroup | null
+  ) => {
+    setIsKodiLoading(true);
+    setKodiError(null);
+    
+    try {
+      const kodiSystem = systemOverride ?? activeSystem;
+      const kodiGroup = groupOverride ?? selectedKodiGroup;
+      const kodiUrl = getKodiUrl(kodiSystem);
+      
+      const payload = {
+        jsonrpc: '2.0',
+        method: 'PVR.GetChannels',
+        params: {
+          channelgroupid: kodiGroup?.channelgroupid ?? 'alltv',
+          properties: ['thumbnail', 'channelnumber', 'hidden', 'locked', 'lastplayed'],
+        },
+        id: 1,
+      };
+      
+      const response = await fetch(kodiUrl, {
+        method: 'POST',
+        headers: getKodiRequestHeaders(kodiSystem),
+        body: JSON.stringify(payload),
+      });
+      
+      if (response.status === 401) {
+        openKodiAuthModal();
+        throw new Error('Kodi authentication failed');
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to connect to Kodi');
+      }
+      
+      const data = await response.json();
+      const channels = (data?.result?.channels || []) as KodiChannel[];
+      setKodiChannels(channels);
+      
+      if (channels.length === 0) {
+        setKodiError(
+          kodiGroup
+            ? `No channels found in ${kodiGroup.label}.`
+            : 'No channels found. Make sure PVR is configured in Kodi.'
+        );
+      }
+    } catch (error) {
+      console.error('Error fetching Kodi channels:', error);
+      const message =
+        error instanceof Error && error.message === 'Kodi authentication failed'
+          ? 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.'
+          : 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      setKodiError(message);
+      setKodiChannels([]);
+    } finally {
+      setIsKodiLoading(false);
+    }
+  };
+
+  const playKodiChannel = async (channelId: number, channelName: string) => {
+    try {
+      const kodiUrl = getKodiUrl(activeSystem);
+      
+      const payload = {
+        jsonrpc: "2.0",
+        method: "Player.Open",
+        params: {
+          item: { channelid: channelId }
+        },
+        id: 1
+      };
+      
+      const response = await fetch(kodiUrl, {
+        method: 'POST',
+        headers: getKodiRequestHeaders(activeSystem),
+        body: JSON.stringify(payload),
+      });
+
+      if (response.status === 401) {
+        openKodiAuthModal();
+        throw new Error('Kodi authentication failed');
+      }
+      
+      if (response.ok) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        console.log(`Playing channel: ${channelName}`);
+      } else {
+        Alert.alert('Error', 'Failed to play channel');
+      }
+    } catch (error) {
+      console.error('Error playing channel:', error);
+      Alert.alert(
+        'Error',
+        error instanceof Error && error.message === 'Kodi authentication failed'
+          ? 'Kodi rejected the username or password for this system.'
+          : 'Could not connect to Kodi'
+      );
+    }
+  };
+
+  const checkKodiAvailability = async () => {
+    try {
+      const kodiUrl = getKodiUrl(activeSystem);
+      
+      const payload = {
+        jsonrpc: "2.0",
+        method: "JSONRPC.Ping",
+        id: 1
+      };
+      
+      const fetchPromise = fetch(kodiUrl, {
+        method: 'POST',
+        headers: getKodiRequestHeaders(activeSystem),
+        body: JSON.stringify(payload),
+      });
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout')), 2000);
+      });
+      
+      const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.result === 'pong') {
+          return;
+        }
+      }
+    } catch {
+      return;
+    }
+  };
+
   const addNewApp = () => {
     if (!newAppName.trim()) {
       Alert.alert('Missing name', 'Please enter an app name.');
@@ -444,8 +747,6 @@ export default function RemoteScreen() {
       ...(newAppType === 'native' ? { command: newAppCommand.trim() } : { url: newAppUrl.trim() }),
     };
 
-    // Send raw JSON message directly
-    const message = JSON.stringify(payload);
     if (repositoryRef.current) {
       // Access internal send method
       (repositoryRef.current as any).sendPayload?.(payload, 'Add App');
@@ -519,9 +820,9 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
-  const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT') => {
+  const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT' | 'SLEEP') => {
     setIsMenuVisible(false);
-    const actionLabel = action === 'SHUTDOWN' ? 'Shutdown' : 'Reboot';
+    const actionLabel = action === 'SHUTDOWN' ? 'Shutdown' : action === 'REBOOT' ? 'Reboot' : 'Sleep';
 
     if (repositoryState.isDemoMode) {
       sendAction(action);
@@ -531,13 +832,15 @@ export default function RemoteScreen() {
     const message =
       action === 'SHUTDOWN'
         ? 'Shut down the LinuxTV system now?'
-        : 'Reboot the LinuxTV system now?';
+        : action === 'REBOOT'
+        ? 'Reboot the LinuxTV system now?'
+        : 'Put the LinuxTV system to sleep?';
 
     Alert.alert(actionLabel, message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: actionLabel,
-        style: 'destructive',
+        style: action === 'SLEEP' ? 'default' : 'destructive',
         onPress: () => sendAction(action),
       },
     ]);
@@ -610,6 +913,9 @@ export default function RemoteScreen() {
         const migratedSystem: SavedSystem = {
           id: createSystemId(),
           ipAddress: storedHost.trim(),
+          kodiPassword: '',
+          kodiPort: DEFAULT_KODI_PORT,
+          kodiUsername: '',
           name: buildSystemName('', storedHost.trim()),
           password: storedPassword ?? '',
           port: storedPort?.trim() || DEFAULT_PORT,
@@ -691,11 +997,54 @@ export default function RemoteScreen() {
     };
   }, [hasSavedSetup, ipAddress, isHydrated, password, port, repositoryState.isDemoMode, username]);
 
+  useEffect(() => {
+    if (repositoryState.isDemoMode || !activeSystem?.ipAddress) {
+      return;
+    }
+
+    void checkKodiAvailability();
+    // This probe should rerun when the selected system or Kodi credentials change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    activeSystem?.id,
+    activeSystem?.ipAddress,
+    activeSystem?.kodiPassword,
+    activeSystem?.kodiPort,
+    activeSystem?.kodiUsername,
+    repositoryState.isDemoMode,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'kodi' || repositoryState.isDemoMode || !activeSystem?.ipAddress) {
+      return;
+    }
+
+    if (!selectedKodiGroup && kodiGroups.length === 0 && !isKodiLoading) {
+      void fetchKodiGroups();
+    }
+    // This is an entry-point fetch for the Kodi browser.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, activeSystem?.id, repositoryState.isDemoMode]);
+
   const showLoginScreen = !hasSavedSetup;
   const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
+  const normalizedKodiSearchQuery = kodiSearchQuery.trim().toLowerCase();
+  const filteredKodiGroups = normalizedKodiSearchQuery
+    ? kodiGroups.filter((group) => group.label.toLowerCase().includes(normalizedKodiSearchQuery))
+    : kodiGroups;
+  const filteredKodiChannels = normalizedKodiSearchQuery
+    ? kodiChannels.filter((channel) => {
+        const channelNumber = String(channel.channelnumber ?? '');
+        return (
+          channel.label.toLowerCase().includes(normalizedKodiSearchQuery) ||
+          channelNumber.toLowerCase().includes(normalizedKodiSearchQuery)
+        );
+      })
+    : kodiChannels;
   const tabItems: { key: TabType; label: string; icon: ComponentProps<typeof Ionicons>['name'] }[] = [
     { key: 'remote', label: 'Remote', icon: 'phone-portrait-outline' },
     { key: 'apps', label: 'Apps', icon: 'grid' },
+    { key: 'kodi', label: 'Kodi', icon: 'play-circle' },
     { key: 'keyboard', label: 'Keyboard', icon: 'text' },
     { key: 'touchpad', label: 'Touchpad', icon: 'hand-left' },
   ];
@@ -739,11 +1088,18 @@ export default function RemoteScreen() {
           <View style={styles.headerLeft}>
             <View style={styles.headerTextWrap}>
               <Text style={styles.title}>LinuxTV</Text>
-              <Text style={styles.deviceName}>
-                {repositoryState.isDemoMode
-                  ? 'Mock remote session'
-                  : activeSystem?.name || repositoryState.deviceName || 'No system selected'}
-              </Text>
+              <View style={styles.headerMetaRow}>
+                <Text style={styles.deviceName}>
+                  {repositoryState.isDemoMode
+                    ? 'Mock remote session'
+                    : activeSystem?.name || repositoryState.deviceName || 'No system selected'}
+                </Text>
+                {!showLoginScreen ? (
+                  <Text style={styles.headerStatusText} numberOfLines={1}>
+                    {repositoryState.lastMessage}
+                  </Text>
+                ) : null}
+              </View>
             </View>
             <View
               style={[
@@ -826,6 +1182,38 @@ export default function RemoteScreen() {
               autoCorrect={false}
               style={styles.input}
             />
+            <Text style={styles.formSectionLabel}>Kodi web server login</Text>
+            <View style={styles.addressRow}>
+              <TextInput
+                value={kodiPort}
+                onChangeText={setKodiPort}
+                placeholder="Kodi port"
+                placeholderTextColor="#8b949e"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="number-pad"
+                style={[styles.input, styles.portInput]}
+              />
+            </View>
+            <TextInput
+              value={kodiUsername}
+              onChangeText={setKodiUsername}
+              placeholder="Kodi username"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <TextInput
+              value={kodiPassword}
+              onChangeText={setKodiPassword}
+              placeholder="Kodi password"
+              placeholderTextColor="#8b949e"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
             <Pressable
               style={[styles.actionButton, styles.primaryButton]}
               onPress={saveSystemAndConnect}>
@@ -841,8 +1229,6 @@ export default function RemoteScreen() {
           </View>
         ) : (
           <View style={styles.remoteContainer}>
-            <Text style={styles.statusMessage}>{repositoryState.lastMessage}</Text>
-
             {activeTab === 'remote' && (
               <ScrollView
                 style={styles.remoteScroll}
@@ -952,6 +1338,16 @@ export default function RemoteScreen() {
                       style={styles.actionButtonSmall}
                       textStyle={styles.actionButtonText}
                     />
+                    <ControlButton
+                      icon="expand"
+                      label="Fullscreen"
+                      onPress={() => {
+                        sendAction('TOGGLE_FULLSCREEN');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }}
+                      style={[styles.actionButtonSmall, styles.fullscreenButtonSmall]}
+                      textStyle={styles.fullscreenButtonTextSmall}
+                    />
                   </View>
 
                   {/* Media Controls */}
@@ -981,6 +1377,40 @@ export default function RemoteScreen() {
                       label="Info"
                       onPress={() => {
                         sendAction('INFO');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
+                  </View>
+
+                  {/* Media Track Controls */}
+                  <View style={styles.actionButtonsRow}>
+                    <ControlButton
+                      icon="play-skip-back"
+                      label="Previous"
+                      onPress={() => {
+                        sendAction('PREVIOUS_TRACK');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
+                    <ControlButton
+                      icon="stop"
+                      label="Stop"
+                      onPress={() => {
+                        sendAction('STOP_MEDIA');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }}
+                      style={styles.actionButtonSmall}
+                      textStyle={styles.actionButtonText}
+                    />
+                    <ControlButton
+                      icon="play-skip-forward"
+                      label="Next"
+                      onPress={() => {
+                        sendAction('NEXT_TRACK');
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                       }}
                       style={styles.actionButtonSmall}
@@ -1196,6 +1626,165 @@ export default function RemoteScreen() {
                       <Ionicons name="apps" size={64} color="#8b949e" />
                       <Text style={styles.emptyAppsText}>No apps found</Text>
                       <Text style={styles.emptyAppsSubtext}>Tap refresh to load apps from server</Text>
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
+            )}
+
+            {activeTab === 'kodi' && (
+              <ScrollView
+                style={styles.remoteScroll}
+                contentContainerStyle={styles.remoteScrollContent}
+                showsVerticalScrollIndicator={false}>
+                <View style={styles.kodiContainer}>
+                  <View style={styles.kodiHeader}>
+                    <View style={styles.kodiHeaderTitleWrap}>
+                      {selectedKodiGroup ? (
+                        <Pressable
+                          style={({ pressed }) => [styles.kodiBackButton, pressed && styles.pressed]}
+                          onPress={() => {
+                            setSelectedKodiGroup(null);
+                            setKodiChannels([]);
+                            setKodiError(null);
+                            setKodiSearchQuery('');
+                          }}>
+                          <Ionicons name="chevron-back" size={18} color="#58a6ff" />
+                          <Text style={styles.kodiBackButtonText}>Folders</Text>
+                        </Pressable>
+                      ) : null}
+                      <Text style={styles.kodiTitle}>
+                        {selectedKodiGroup ? selectedKodiGroup.label : 'Kodi Folders'}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                      onPress={() => {
+                        void (selectedKodiGroup ? fetchKodiChannels() : fetchKodiGroups());
+                      }}>
+                      <Ionicons name="refresh" size={20} color="#58a6ff" />
+                    </Pressable>
+                  </View>
+                  <Text style={styles.kodiSubtitle}>
+                    {selectedKodiGroup
+                      ? 'Choose a channel to start playback'
+                      : 'Open a channel folder, then pick the channel inside'}
+                  </Text>
+                  <View style={styles.kodiSearchWrap}>
+                    <Ionicons name="search" size={18} color="#8b949e" />
+                    <TextInput
+                      value={kodiSearchQuery}
+                      onChangeText={setKodiSearchQuery}
+                      placeholder={selectedKodiGroup ? 'Search channels' : 'Search folders'}
+                      placeholderTextColor="#8b949e"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={styles.kodiSearchInput}
+                    />
+                    {kodiSearchQuery ? (
+                      <Pressable
+                        style={({ pressed }) => [styles.kodiSearchClearButton, pressed && styles.pressed]}
+                        onPress={() => setKodiSearchQuery('')}>
+                        <Ionicons name="close-circle" size={18} color="#8b949e" />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  
+                  {isKodiLoading && (
+                    <View style={styles.kodiLoading}>
+                      <Ionicons name="sync" size={48} color="#58a6ff" />
+                      <Text style={styles.kodiLoadingText}>Loading channels...</Text>
+                    </View>
+                  )}
+                  
+                  {kodiError && !isKodiLoading && (
+                    <View style={styles.kodiErrorContainer}>
+                      <Ionicons name="alert-circle" size={48} color="#f85149" />
+                      <Text style={styles.kodiErrorText}>{kodiError}</Text>
+                      <Pressable
+                        style={styles.kodiRetryButton}
+                        onPress={() => {
+                          void (selectedKodiGroup ? fetchKodiChannels() : fetchKodiGroups());
+                        }}>
+                        <Text style={styles.kodiRetryButtonText}>Retry</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                  
+                  {!isKodiLoading && !kodiError && !selectedKodiGroup && filteredKodiGroups.length > 0 && (
+                    <View style={styles.channelsGrid}>
+                      {filteredKodiGroups.map((group) => (
+                        <Pressable
+                          key={String(group.channelgroupid)}
+                          style={({ pressed }) => [styles.channelCard, pressed && styles.pressed]}
+                          onPress={() => {
+                            setSelectedKodiGroup(group);
+                            void fetchKodiChannels(undefined, group);
+                          }}>
+                          <View style={styles.channelIconContainer}>
+                            <Ionicons name="folder-open" size={32} color="#58a6ff" />
+                          </View>
+                          <View style={styles.channelInfo}>
+                            <Text style={styles.channelName}>{group.label}</Text>
+                            <Text style={styles.channelMeta}>Kodi channel folder</Text>
+                          </View>
+                          <Ionicons name="chevron-forward" size={24} color="#8b949e" />
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+
+                  {!isKodiLoading && !kodiError && selectedKodiGroup && filteredKodiChannels.length > 0 && (
+                    <View style={styles.channelsGrid}>
+                      {filteredKodiChannels.map((channel) => (
+                        <Pressable
+                          key={channel.channelid}
+                          style={({ pressed }) => [styles.channelCard, pressed && styles.pressed]}
+                          onPress={() => playKodiChannel(channel.channelid, channel.label)}>
+                          <View style={styles.channelIconContainer}>
+                            <Ionicons name="tv" size={32} color="#58a6ff" />
+                          </View>
+                          <View style={styles.channelInfo}>
+                            <Text style={styles.channelNumber}>{channel.channelnumber}</Text>
+                            <Text style={styles.channelName}>{channel.label}</Text>
+                          </View>
+                          <Ionicons name="play-circle" size={24} color="#238636" />
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
+                  
+                  {!isKodiLoading &&
+                    !kodiError &&
+                    !selectedKodiGroup &&
+                    filteredKodiGroups.length === 0 && (
+                    <View style={styles.emptyKodi}>
+                      <Ionicons name="folder-open" size={64} color="#8b949e" />
+                      <Text style={styles.emptyKodiText}>
+                        {kodiSearchQuery ? 'No matching folders' : 'No folders found'}
+                      </Text>
+                      <Text style={styles.emptyKodiSubtext}>
+                        {kodiSearchQuery
+                          ? 'Try a different search term'
+                          : 'Make sure Kodi is running and PVR channel groups are available'}
+                      </Text>
+                    </View>
+                  )}
+
+                  {!isKodiLoading &&
+                    !kodiError &&
+                    selectedKodiGroup &&
+                    filteredKodiChannels.length === 0 && (
+                    <View style={styles.emptyKodi}>
+                      <Ionicons name="tv" size={64} color="#8b949e" />
+                      <Text style={styles.emptyKodiText}>
+                        {kodiSearchQuery ? 'No matching channels' : 'No channels in this folder'}
+                      </Text>
+                      <Text style={styles.emptyKodiSubtext}>
+                        {kodiSearchQuery
+                          ? 'Try a different search term'
+                          : 'Try another Kodi folder or refresh this one'}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -1473,6 +2062,15 @@ export default function RemoteScreen() {
               </View>
             </Pressable>
             
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+              onPress={() => confirmPowerAction('SLEEP')}>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="moon" size={20} color="#ffa657" />
+                <Text style={styles.menuItemWarningText}>Sleep</Text>
+              </View>
+            </Pressable>
+            
             <View style={styles.menuDivider} />
             
             <Pressable
@@ -1557,6 +2155,38 @@ export default function RemoteScreen() {
               autoCorrect={false}
               style={styles.input}
             />
+            <Text style={styles.formSectionLabel}>Kodi web server login</Text>
+            <View style={styles.addressRow}>
+              <TextInput
+                value={kodiPort}
+                onChangeText={setKodiPort}
+                placeholder="Kodi port"
+                placeholderTextColor="#8b949e"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="number-pad"
+                style={[styles.input, styles.portInput]}
+              />
+            </View>
+            <TextInput
+              value={kodiUsername}
+              onChangeText={setKodiUsername}
+              placeholder="Kodi username"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <TextInput
+              value={kodiPassword}
+              onChangeText={setKodiPassword}
+              placeholder="Kodi password"
+              placeholderTextColor="#8b949e"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
             <Pressable
               style={[styles.actionButton, styles.primaryButton]}
               onPress={saveSystemAndConnect}>
@@ -1570,6 +2200,71 @@ export default function RemoteScreen() {
                 setIsSystemEditorVisible(false);
                 resetEditorToActiveSystem();
               }}>
+              <Text style={styles.ghostButtonText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isKodiAuthVisible}
+        onRequestClose={() => setIsKodiAuthVisible(false)}>
+        <Pressable
+          style={styles.editorOverlay}
+          onPress={() => setIsKodiAuthVisible(false)}>
+          <Pressable style={styles.editorSheet} onPress={() => undefined}>
+            <Text style={styles.editorTitle}>Kodi Login</Text>
+            <Text style={styles.editorSubtitle}>
+              Kodi is reachable, but it needs its web server username and password.
+            </Text>
+            <TextInput
+              value={kodiAuthPort}
+              onChangeText={setKodiAuthPort}
+              placeholder="Kodi port"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="number-pad"
+              style={[styles.input, styles.portInput]}
+            />
+            <TextInput
+              value={kodiAuthUsername}
+              onChangeText={setKodiAuthUsername}
+              placeholder="Kodi username"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <TextInput
+              value={kodiAuthPassword}
+              onChangeText={setKodiAuthPassword}
+              placeholder="Kodi password"
+              placeholderTextColor="#8b949e"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <Pressable
+              style={[styles.actionButton, styles.primaryButton]}
+              onPress={() => {
+                void saveKodiAuthForActiveSystem().then((updatedSystem) => {
+                  if (!updatedSystem) {
+                    return;
+                  }
+                  void (selectedKodiGroup
+                    ? fetchKodiChannels(updatedSystem, selectedKodiGroup)
+                    : fetchKodiGroups(updatedSystem));
+                });
+              }}>
+              <Text style={styles.primaryButtonText}>Save & Retry</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionButton, styles.ghostButton]}
+              onPress={() => setIsKodiAuthVisible(false)}>
               <Text style={styles.ghostButtonText}>Cancel</Text>
             </Pressable>
           </Pressable>
@@ -1656,6 +2351,12 @@ const styles = StyleSheet.create({
   headerTextWrap: {
     flex: 1,
   },
+  headerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
   title: {
     color: '#f0f6fc',
     fontSize: 32,
@@ -1665,7 +2366,12 @@ const styles = StyleSheet.create({
   deviceName: {
     color: '#8b949e',
     fontSize: 13,
-    marginTop: 2,
+    flexShrink: 0,
+  },
+  headerStatusText: {
+    color: '#58a6ff',
+    fontSize: 12,
+    flex: 1,
   },
   statusDot: {
     width: 12,
@@ -1740,18 +2446,6 @@ const styles = StyleSheet.create({
     gap: 20,
     paddingBottom: 24,
     paddingTop: 8,
-  },
-  statusMessage: {
-    color: '#8b949e',
-    fontSize: 13,
-    textAlign: 'center',
-    marginBottom: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#161b22',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#21262d',
   },
   remoteControl: {
     gap: 18,
@@ -2165,6 +2859,14 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
   },
+  fullscreenButtonSmall: {
+    backgroundColor: '#21262d',
+    borderColor: '#30363d',
+  },
+  fullscreenButtonTextSmall: {
+    color: '#f0f6fc',
+    fontWeight: '600',
+  },
   buttonIcon: {
     marginBottom: 2,
   },
@@ -2324,6 +3026,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 13,
     fontSize: 15,
+  },
+  formSectionLabel: {
+    color: '#8b949e',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginTop: 4,
+    textTransform: 'uppercase',
   },
   actionButton: {
     minHeight: 50,
@@ -2493,6 +3203,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  menuItemWarningText: {
+    color: '#ffa657',
+    fontSize: 15,
+    fontWeight: '600',
+  },
   editorOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -2521,5 +3236,155 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     marginBottom: 4,
+  },
+  kodiContainer: {
+    gap: 16,
+  },
+  kodiHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  kodiHeaderTitleWrap: {
+    flex: 1,
+    gap: 8,
+  },
+  kodiBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+  },
+  kodiBackButtonText: {
+    color: '#58a6ff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  kodiTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#f0f6fc',
+  },
+  kodiSubtitle: {
+    fontSize: 14,
+    color: '#8b949e',
+    marginBottom: 8,
+  },
+  kodiSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    backgroundColor: '#161b22',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  kodiSearchInput: {
+    flex: 1,
+    color: '#f0f6fc',
+    fontSize: 15,
+    paddingVertical: 0,
+  },
+  kodiSearchClearButton: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  kodiLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 12,
+  },
+  kodiLoadingText: {
+    fontSize: 16,
+    color: '#58a6ff',
+    fontWeight: '500',
+  },
+  kodiErrorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  kodiErrorText: {
+    fontSize: 15,
+    color: '#f85149',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  kodiRetryButton: {
+    backgroundColor: '#21262d',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    marginTop: 8,
+  },
+  kodiRetryButtonText: {
+    color: '#58a6ff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  channelsGrid: {
+    gap: 12,
+  },
+  channelCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#161b22',
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    gap: 14,
+  },
+  channelIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: '#0d1117',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  channelNumber: {
+    fontSize: 13,
+    color: '#58a6ff',
+    fontWeight: '600',
+  },
+  channelName: {
+    fontSize: 17,
+    color: '#f0f6fc',
+    fontWeight: '600',
+  },
+  channelMeta: {
+    fontSize: 13,
+    color: '#8b949e',
+  },
+  emptyKodi: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 12,
+  },
+  emptyKodiText: {
+    fontSize: 18,
+    color: '#8b949e',
+    fontWeight: '600',
+  },
+  emptyKodiSubtext: {
+    fontSize: 14,
+    color: '#8b949e',
+    textAlign: 'center',
+    paddingHorizontal: 20,
   },
 });

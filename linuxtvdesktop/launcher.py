@@ -73,6 +73,7 @@ def _load_qt_binding():
                 qt_gui.QIcon,
                 qt_gui.QKeyEvent,
                 qt_gui.QPixmap,
+                qt_gui.QWheelEvent,
                 qt_widgets.QApplication,
                 qt_widgets.QComboBox,
                 qt_widgets.QDialog,
@@ -110,6 +111,7 @@ def _load_qt_binding():
     QIcon,
     QKeyEvent,
     QPixmap,
+    QWheelEvent,
     QApplication,
     QComboBox,
     QDialog,
@@ -698,6 +700,7 @@ def request_system_power_action(action: str):
     command_map = {
         "SHUTDOWN": ["systemctl", "poweroff"],
         "REBOOT": ["systemctl", "reboot"],
+        "SLEEP": ["systemctl", "suspend"],
     }
     command = command_map.get(action.upper())
     if not command:
@@ -874,6 +877,16 @@ class WebSocketControlServer(threading.Thread):
     async def handler(self, websocket, path=None):
         logging.info("WebSocket connection from %s", websocket.remote_address)
         authenticated = not remote_auth_enabled(self.window.config)
+        
+        # If no authentication required, send apps list immediately
+        if authenticated:
+            apps_list = self.window.get_installed_apps()
+            await websocket.send(json.dumps({
+                "status": "ok",
+                "type": "apps_list",
+                "apps": apps_list
+            }))
+        
         try:
             async for message in websocket:
                 logging.info("Received remote action: %s", message)
@@ -890,6 +903,13 @@ class WebSocketControlServer(threading.Thread):
                     if verify_remote_credentials(self.window.config, username, password):
                         authenticated = True
                         await websocket.send(json.dumps({"status": "auth_ok"}))
+                        # Automatically send apps list after successful authentication
+                        apps_list = self.window.get_installed_apps()
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "apps_list",
+                            "apps": apps_list
+                        }))
                     else:
                         await websocket.send(json.dumps({"status": "auth_error", "error": "invalid credentials"}))
                     continue
@@ -2559,6 +2579,32 @@ class LauncherWindow(QMainWindow):
         if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
             self.activate_current()
 
+    def wheelEvent(self, event):
+        """Handle touchpad two-finger scrolling."""
+        if not self.tiles:
+            return
+        
+        self.reset_auto_launch_timer()
+        
+        # Get the angle delta - positive for up/left, negative for down/right
+        delta_y = event.angleDelta().y()
+        delta_x = event.angleDelta().x()
+        
+        # Vertical scrolling (up/down)
+        if abs(delta_y) > abs(delta_x):
+            if delta_y < 0:  # Scroll down
+                self.navigate("DOWN")
+            elif delta_y > 0:  # Scroll up
+                self.navigate("UP")
+        # Horizontal scrolling (left/right)
+        else:
+            if delta_x < 0:  # Scroll right
+                self.navigate("RIGHT")
+            elif delta_x > 0:  # Scroll left
+                self.navigate("LEFT")
+        
+        event.accept()
+
     def closeEvent(self, event):
         if hasattr(self, "ws_server") and self.ws_server:
             self.ws_server.stop()
@@ -2734,7 +2780,18 @@ class LauncherWindow(QMainWindow):
             "MENU",
             "PLAY_PAUSE",
             "INFO",
+            "PREVIOUS_TRACK",
+            "NEXT_TRACK",
+            "STOP_MEDIA",
         ):
+            self.send_remote_key_to_active_window(action)
+            return
+
+        if action in ("PLAY_PAUSE",):
+            self.send_remote_key_to_active_window(action)
+            return
+
+        if action in ("PREVIOUS_TRACK", "NEXT_TRACK", "STOP_MEDIA"):
             self.send_remote_key_to_active_window(action)
             return
 
@@ -2748,6 +2805,10 @@ class LauncherWindow(QMainWindow):
 
         if action in ("VOLUME_UP", "VOLUME_DOWN", "MUTE"):
             control_system_volume(action)
+            return
+
+        if action == "TOGGLE_FULLSCREEN":
+            self.toggle_fullscreen()
             return
 
         if action in ("UP", "DOWN", "LEFT", "RIGHT"):
@@ -2798,6 +2859,9 @@ class LauncherWindow(QMainWindow):
             "PLAY_PAUSE": ["space"],
             "MENU": ["m"],
             "INFO": ["i"],
+            "PREVIOUS_TRACK": ["XF86AudioPrev"],
+            "NEXT_TRACK": ["XF86AudioNext"],
+            "STOP_MEDIA": ["XF86AudioStop"],
         }
 
         profile_overrides = {
@@ -2871,9 +2935,10 @@ class LauncherWindow(QMainWindow):
             return
 
         self.focus_remote_target_window(xdotool, target_window)
-        for key_name in key_sequences:
-            subprocess.run([xdotool, "key", "--window", target_window, "--clearmodifiers", key_name], check=False)
-        logging.info("Forwarded remote action %s to active window", action)
+        # Only send the first key in the sequence (not all of them)
+        key_name = key_sequences[0]
+        subprocess.run([xdotool, "key", "--window", target_window, "--clearmodifiers", key_name], check=False)
+        logging.info("Forwarded remote action %s to active window (key: %s)", action, key_name)
 
     def send_remote_text_to_active_window(self, text: str):
         if not text:
@@ -3009,6 +3074,43 @@ class LauncherWindow(QMainWindow):
                 logging.exception("Failed to close active window: %s", e)
         else:
             logging.warning("No active process or window found to close")
+
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode for the active window or launcher."""
+        launcher_active = self.launcher_context_is_active()
+        
+        if launcher_active:
+            # Toggle fullscreen for the launcher window itself
+            if self.isFullScreen():
+                logging.info("Exiting fullscreen for launcher")
+                self.showNormal()
+                self.apply_fullscreen_to_primary_screen()
+            else:
+                logging.info("Entering fullscreen for launcher")
+                self.showFullScreen()
+            return
+        
+        # Try to toggle fullscreen for the active window using xdotool
+        xdotool, active_window = self.active_system_window()
+        
+        if xdotool and active_window:
+            # Don't toggle the launcher window
+            if active_window in self.launcher_window_ids():
+                if self.isFullScreen():
+                    self.showNormal()
+                    self.apply_fullscreen_to_primary_screen()
+                else:
+                    self.showFullScreen()
+                return
+            
+            logging.info("Toggling fullscreen for active window %s", active_window)
+            try:
+                # Send F11 key to toggle fullscreen (standard for most apps)
+                subprocess.run([xdotool, "key", "F11"], check=False, timeout=3)
+            except Exception as e:
+                logging.exception("Failed to toggle fullscreen: %s", e)
+        else:
+            logging.warning("No active window found for fullscreen toggle")
 
     def check_active_process(self):
         if not self.active_process:
