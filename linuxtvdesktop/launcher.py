@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
 import configparser
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 import hashlib
 import importlib
 import json
@@ -46,10 +48,12 @@ def _load_qt_binding():
                 qt_core = importlib.import_module("PyQt5.QtCore")
                 qt_gui = importlib.import_module("PyQt5.QtGui")
                 qt_widgets = importlib.import_module("PyQt5.QtWidgets")
+                signal_type = qt_core.pyqtSignal
             elif binding == "PySide6":
                 qt_core = importlib.import_module("PySide6.QtCore")
                 qt_gui = importlib.import_module("PySide6.QtGui")
                 qt_widgets = importlib.import_module("PySide6.QtWidgets")
+                signal_type = qt_core.Signal
             else:
                 logging.warning("Unknown Qt binding requested: %s", binding)
                 continue
@@ -57,9 +61,14 @@ def _load_qt_binding():
             return (
                 binding,
                 qt_core.QEvent,
+                qt_core.QEasingCurve,
+                qt_core.QObject,
+                qt_core.QPropertyAnimation,
+                qt_core.QRect,
                 qt_core.Qt,
                 qt_core.QSize,
                 qt_core.QTimer,
+                signal_type,
                 qt_gui.QFont,
                 qt_gui.QIcon,
                 qt_gui.QKeyEvent,
@@ -89,9 +98,14 @@ def _load_qt_binding():
 (
     QT_BINDING,
     QEvent,
+    QEasingCurve,
+    QObject,
+    QPropertyAnimation,
+    QRect,
     Qt,
     QSize,
     QTimer,
+    Signal,
     QFont,
     QIcon,
     QKeyEvent,
@@ -200,6 +214,7 @@ def normalized_icon_path(source_path: str, cache_key: str, size: int = 96):
     return str(target_path)
 
 
+@lru_cache(maxsize=256)
 def resolve_icon_name(icon_name: str):
     if not icon_name:
         return ""
@@ -885,40 +900,101 @@ class WebSocketControlServer(threading.Thread):
 
 
 class TileButton(QPushButton):
+    SHELL_PADDING_X = 12
+    SHELL_PADDING_Y = 12
+
     def __init__(self, name: str, icon_path: str, tooltip: str = "", variant: str = "default", subtitle: str = ""):
         button_text = name if not subtitle else f"{name}\n{subtitle}"
         super().__init__(button_text)
         self.variant = variant
         self.title = name
         self.subtitle = subtitle
+        self.base_size = QSize(380, 214)
+        self.shell_size = QSize(
+            self.base_size.width() + (self.SHELL_PADDING_X * 2),
+            self.base_size.height() + (self.SHELL_PADDING_Y * 2),
+        )
+        self._rest_rect = QRect(
+            self.SHELL_PADDING_X,
+            self.SHELL_PADDING_Y,
+            self.base_size.width(),
+            self.base_size.height(),
+        )
+        self._focus_rect = QRect(0, 0, self.shell_size.width(), self.shell_size.height())
+        self._anim = QPropertyAnimation(self, b"geometry", self)
+        self._anim.setDuration(160)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.card_shell = None
+        self.row_scroll = None
+        self.section_widget = None
+        self.entry_kind = ""
+        self.entry_item = None
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumSize(QSize(340, 172))
-        self.setMaximumHeight(186)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setMinimumSize(self.base_size)
+        self.setMaximumSize(self.shell_size)
         self.setFont(QFont("Sans Serif", 18, QFont.Bold))
-        if icon_path:
-            path = resource_path(icon_path)
-            if path.exists():
-                self.setIcon(QIcon(str(path)))
-                self.setIconSize(QSize(80, 80))
+        self.setIconSize(QSize(120, 120))
+        self.set_tile_icon(icon_path)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self.setProperty("tileVariant", variant)
         self.setProperty("hasSubtitle", "true" if subtitle else "false")
         self.setStyleSheet("")
+        self.setGeometry(self._rest_rect)
+
+    def set_tile_icon(self, icon_path: str):
+        if not icon_path:
+            self.setIcon(QIcon())
+            return
+
+        path = resource_path(icon_path)
+        if not path.exists():
+            path = Path(icon_path).expanduser()
+        if path.exists():
+            self.setIcon(QIcon(str(path)))
+
+    def update_geometry_targets(self, shell_rect: QRect):
+        self._focus_rect = QRect(0, 0, shell_rect.width(), shell_rect.height())
+        self._rest_rect = shell_rect.adjusted(
+            self.SHELL_PADDING_X,
+            self.SHELL_PADDING_Y,
+            -self.SHELL_PADDING_X,
+            -self.SHELL_PADDING_Y,
+        )
+        self._anim.stop()
+        self.setGeometry(self._focus_rect if self.hasFocus() else self._rest_rect)
+
+    def animate_focus(self, focused: bool):
+        end_rect = self._focus_rect if focused else self._rest_rect
+        if self.geometry() == end_rect:
+            return
+        self._anim.stop()
+        self._anim.setStartValue(self.geometry())
+        self._anim.setEndValue(end_rect)
+        self._anim.start()
+        if focused and self.parentWidget():
+            self.parentWidget().raise_()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.animate_focus(True)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.animate_focus(False)
 
 
 class AppCard(QWidget):
     def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, show_actions: bool = True):
         super().__init__()
         self.setObjectName("appCardShell")
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumSize(tile_button.minimumSize())
-        self.setFixedHeight(tile_button.maximumHeight())
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setFixedSize(tile_button.shell_size)
 
         self.tile_button = tile_button
         self.tile_button.setParent(self)
-        self.tile_button.setGeometry(0, 0, self.width(), self.height())
+        self.tile_button.update_geometry_targets(self.rect())
 
         self.edit_button = None
         self.delete_button = None
@@ -942,18 +1018,22 @@ class AppCard(QWidget):
             self.delete_button.setFixedSize(44, 44)
 
     def sizeHint(self):
-        return self.tile_button.sizeHint()
+        return self.tile_button.shell_size
 
     def minimumSizeHint(self):
-        return self.tile_button.minimumSizeHint()
+        return self.tile_button.shell_size
 
     def resizeEvent(self, event):
-        self.tile_button.setGeometry(0, 0, self.width(), self.height())
+        self.tile_button.update_geometry_targets(self.rect())
         if self.edit_button is not None:
             self.edit_button.move(self.width() - self.edit_button.width() - 14, 14)
         if self.delete_button is not None:
             self.delete_button.move(self.width() - self.delete_button.width() - 14, 64)
         super().resizeEvent(event)
+
+
+class IconUpdateBridge(QObject):
+    icon_ready = Signal(int, object, str)
 
 
 class AddItemDialog(QDialog):
@@ -1391,7 +1471,10 @@ class LauncherWindow(QMainWindow):
 
         self.config = load_config(config_path)
         self.tiles = []
+        self.tile_rows = []
         self.current_index = 0
+        self.current_row = 0
+        self.current_col = 0
         self.active_process = None
         self.active_process_kind = None
         self.active_process_name = None
@@ -1402,13 +1485,19 @@ class LauncherWindow(QMainWindow):
         self.remote_target_window_cache = None
         self.remote_target_window_cache_at = 0.0
         self.remote_action_queue = queue.Queue()
+        self._icon_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="icon-loader")
+        self._icon_request_token = 0
+        self._icon_bridge = IconUpdateBridge()
+        self._icon_bridge.icon_ready.connect(self._apply_resolved_icon)
+        self._scroll_anim = None
+        self._row_scroll_anim = None
 
         self.process_monitor = QTimer(self)
         self.process_monitor.setInterval(500)
         self.process_monitor.timeout.connect(self.check_active_process)
 
         self.remote_action_timer = QTimer(self)
-        self.remote_action_timer.setInterval(50)
+        self.remote_action_timer.setInterval(16)
         self.remote_action_timer.timeout.connect(self.drain_remote_actions)
         self.remote_action_timer.start()
 
@@ -1504,11 +1593,10 @@ class LauncherWindow(QMainWindow):
         self.tile_scroll = scroll
         container = QWidget()
         container.setObjectName("tileContainer")
-        self.grid = QGridLayout(container)
-        self.grid.setContentsMargins(8, 8, 8, 8)
-        self.grid.setHorizontalSpacing(20)
-        self.grid.setVerticalSpacing(20)
-        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.tile_stack = QVBoxLayout(container)
+        self.tile_stack.setContentsMargins(8, 8, 8, 8)
+        self.tile_stack.setSpacing(22)
+        self.tile_stack.setAlignment(Qt.AlignTop)
 
         self.populate_tiles()
 
@@ -1548,7 +1636,7 @@ class LauncherWindow(QMainWindow):
         self.apply_theme()
 
         if self.tiles:
-            self.tiles[0].setFocus()
+            self.focus_first_tile()
         self.reset_auto_launch_timer()
 
     def apply_theme(self):
@@ -1592,6 +1680,22 @@ class LauncherWindow(QMainWindow):
                 background: transparent;
                 border: none;
             }
+            QWidget[rowSection="true"] {
+                background: transparent;
+            }
+            QLabel[rowHeading="true"] {
+                color: #f0f6fc;
+                font-size: 22px;
+                font-weight: bold;
+                padding: 8px 8px 0 8px;
+            }
+            QScrollArea[rowScroll="true"] {
+                background: transparent;
+                border: none;
+            }
+            QWidget[rowContent="true"] {
+                background: transparent;
+            }
             QScrollArea#tileScroll QScrollBar:vertical {
                 background: transparent;
                 width: 0px;
@@ -1610,12 +1714,14 @@ class LauncherWindow(QMainWindow):
                     stop:0 #21262d, stop:1 #161b22);
                 color: #c9d1d9;
                 border: 1px solid #30363d;
-                border-radius: 16px;
-                padding: 24px 28px;
-                padding-left: 36px;
-                padding-right: 80px;
+                border-radius: 22px;
+                padding: 26px 30px;
+                padding-left: 34px;
+                padding-right: 34px;
+                padding-top: 42px;
+                padding-bottom: 30px;
                 text-align: left;
-                font-size: 16px;
+                font-size: 18px;
             }
             QPushButton[tileVariant="default"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -1633,12 +1739,14 @@ class LauncherWindow(QMainWindow):
                     stop:0 #238636, stop:1 #1a7f37);
                 color: #ffffff;
                 border: 1px solid #2ea043;
-                border-radius: 16px;
-                padding: 24px 28px;
-                padding-left: 36px;
-                padding-right: 80px;
+                border-radius: 22px;
+                padding: 26px 30px;
+                padding-left: 34px;
+                padding-right: 34px;
+                padding-top: 42px;
+                padding-bottom: 30px;
                 text-align: left;
-                font-size: 16px;
+                font-size: 18px;
             }
             QPushButton[tileVariant="accent"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -1716,84 +1824,225 @@ class LauncherWindow(QMainWindow):
             """
         )
 
-    def clear_grid(self):
-        while self.grid.count():
-            item = self.grid.takeAt(0)
+    def clear_tiles(self):
+        while self.tile_stack.count():
+            item = self.tile_stack.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
 
     def populate_tiles(self):
-        self.clear_grid()
+        self.clear_tiles()
         self.tiles = []
+        self.tile_rows = []
         self.current_index = 0
-        row = 0
-        col = 0
+        self.current_row = 0
+        self.current_col = 0
+        self._icon_request_token += 1
+        request_token = self._icon_request_token
 
-        entries = self.get_launchable_entries()
+        categories = self.get_categorized_entries()
+        for category_name, entries in categories:
+            section = QWidget()
+            section.setProperty("rowSection", "true")
+            section_layout = QVBoxLayout(section)
+            section_layout.setContentsMargins(0, 0, 0, 0)
+            section_layout.setSpacing(12)
 
-        label = QLabel("Apps")
-        label.setFont(QFont("Sans Serif", 24, QFont.Bold))
-        label.setStyleSheet("color: #f0f6fc; padding: 16px 4px 8px 4px;")
-        self.grid.addWidget(label, row, 0, 1, COLUMN_COUNT)
-        row += 1
+            label = QLabel(category_name)
+            label.setProperty("rowHeading", "true")
+            section_layout.addWidget(label)
 
-        for entry in entries:
-            app = entry["item"]
-            icon_path = resolve_native_icon(app) if entry["kind"] == "native" else fetch_web_icon(app)
-            tile = TileButton(
-                app.get("name", "Untitled"),
-                icon_path,
-                entry["tooltip"],
-                subtitle=entry["subtitle"],
-            )
-            tile.clicked.connect(lambda checked=False, item=app, kind=entry["kind"]: self.launch_app(item, kind))
-            card = AppCard(
-                tile,
-                lambda checked=False, item=app, kind=entry["kind"]: self.prompt_edit_entry(kind, item),
-                lambda checked=False, item=app, kind=entry["kind"]: self.prompt_delete_entry(kind, item),
-            )
-            self.grid.addWidget(card, row, col)
-            self.tiles.append(tile)
-            col += 1
-            if col >= COLUMN_COUNT:
-                col = 0
-                row += 1
+            row_scroll = QScrollArea()
+            row_scroll.setProperty("rowScroll", "true")
+            row_scroll.setFrameShape(QScrollArea.NoFrame)
+            row_scroll.setWidgetResizable(False)
+            row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            row_scroll.setFixedHeight(270)
 
-        add_tile = TileButton("Add App", "", "Save a new app or site to config.yaml", variant="accent", subtitle="Add a command or website")
+            row_widget = QWidget()
+            row_widget.setProperty("rowContent", "true")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(8, 6, 8, 6)
+            row_layout.setSpacing(24)
+
+            row_tiles = []
+            for entry in entries:
+                app = entry["item"]
+                tile = TileButton(
+                    app.get("name", "Untitled"),
+                    "",
+                    entry["tooltip"],
+                    subtitle=entry["subtitle"],
+                )
+                tile.entry_kind = entry["kind"]
+                tile.entry_item = app
+                tile.clicked.connect(lambda checked=False, item=app, kind=entry["kind"]: self.launch_app(item, kind))
+                card = AppCard(
+                    tile,
+                    lambda checked=False, item=app, kind=entry["kind"]: self.prompt_edit_entry(kind, item),
+                    lambda checked=False, item=app, kind=entry["kind"]: self.prompt_delete_entry(kind, item),
+                )
+                tile.card_shell = card
+                tile.row_scroll = row_scroll
+                tile.section_widget = section
+                row_layout.addWidget(card)
+                self.tiles.append(tile)
+                row_tiles.append(tile)
+
+                future = self._icon_pool.submit(self._resolve_icon, entry)
+                future.add_done_callback(
+                    lambda pending, token=request_token, button=tile: self._queue_icon_result(token, button, pending)
+                )
+
+            row_layout.addStretch(1)
+            row_widget.adjustSize()
+            row_scroll.setWidget(row_widget)
+            section_layout.addWidget(row_scroll)
+            self.tile_stack.addWidget(section)
+            if row_tiles:
+                self.tile_rows.append(row_tiles)
+
+        add_tile = TileButton(
+            "Add App",
+            "",
+            "Save a new app or site to config.yaml",
+            variant="accent",
+            subtitle="Add a command or website",
+        )
         add_tile.clicked.connect(self.prompt_add_entry)
+        add_section = QWidget()
+        add_section.setProperty("rowSection", "true")
+        add_section_layout = QVBoxLayout(add_section)
+        add_section_layout.setContentsMargins(0, 0, 0, 0)
+        add_section_layout.setSpacing(12)
+        add_label = QLabel("Library")
+        add_label.setProperty("rowHeading", "true")
+        add_section_layout.addWidget(add_label)
+        add_row_scroll = QScrollArea()
+        add_row_scroll.setProperty("rowScroll", "true")
+        add_row_scroll.setFrameShape(QScrollArea.NoFrame)
+        add_row_scroll.setWidgetResizable(False)
+        add_row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        add_row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        add_row_scroll.setFixedHeight(270)
+        add_row_widget = QWidget()
+        add_row_widget.setProperty("rowContent", "true")
+        add_row_layout = QHBoxLayout(add_row_widget)
+        add_row_layout.setContentsMargins(8, 6, 8, 6)
+        add_row_layout.setSpacing(24)
         add_card = AppCard(add_tile, show_actions=False)
-        self.grid.addWidget(add_card, row, col)
+        add_tile.card_shell = add_card
+        add_tile.row_scroll = add_row_scroll
+        add_tile.section_widget = add_section
+        add_row_layout.addWidget(add_card)
+        add_row_layout.addStretch(1)
+        add_row_widget.adjustSize()
+        add_row_scroll.setWidget(add_row_widget)
+        add_section_layout.addWidget(add_row_scroll)
+        self.tile_stack.addWidget(add_section)
         self.tiles.append(add_tile)
-        col += 1
-        if col >= COLUMN_COUNT:
-            col = 0
-            row += 1
+        self.tile_rows.append([add_tile])
+
+        self.tile_stack.addStretch(1)
 
         self.reset_auto_launch_timer()
 
-    def get_launchable_entries(self):
-        entries = []
+    def get_categorized_entries(self):
+        native_entries = []
+        web_entries = []
+
         for app in self.config.get("native_apps", []):
-            if is_installed(app.get("cmd", "")):
-                subtitle = app.get("cmd", "").split()[0] if app.get("cmd") else "Application"
-                entries.append({
-                    "kind": "native",
-                    "item": app,
-                    "subtitle": subtitle,
-                    "tooltip": app.get("cmd", ""),
-                })
+            if not is_installed(app.get("cmd", "")):
+                continue
+            subtitle = app.get("cmd", "").split()[0] if app.get("cmd") else "Application"
+            native_entries.append({
+                "kind": "native",
+                "item": app,
+                "subtitle": subtitle,
+                "tooltip": app.get("cmd", ""),
+            })
 
         for app in self.config.get("web_apps", []):
             url = app.get("url", "")
             subtitle = url.replace("https://", "").replace("http://", "")
-            entries.append({
+            web_entries.append({
                 "kind": "web",
                 "item": app,
                 "subtitle": subtitle,
                 "tooltip": url,
             })
+
+        categories = []
+        if native_entries:
+            categories.append(("Native Apps", native_entries))
+        if web_entries:
+            categories.append(("Web Apps", web_entries))
+        return categories
+
+    def get_launchable_entries(self):
+        entries = []
+        for _, category_entries in self.get_categorized_entries():
+            entries.extend(category_entries)
         return entries
+
+    def _resolve_icon(self, entry):
+        app = entry["item"]
+        if entry["kind"] == "native":
+            return resolve_native_icon(app)
+        return fetch_web_icon(app)
+
+    def _queue_icon_result(self, request_token: int, tile: TileButton, future):
+        icon_path = ""
+        try:
+            icon_path = future.result() or ""
+        except Exception:
+            logging.exception("Failed to resolve icon for %s", getattr(tile, "title", "tile"))
+        self._icon_bridge.icon_ready.emit(request_token, tile, icon_path)
+
+    def _apply_resolved_icon(self, request_token: int, tile: TileButton, icon_path: str):
+        if request_token != self._icon_request_token or tile not in self.tiles:
+            return
+        tile.set_tile_icon(icon_path)
+
+    def _flat_index_for_position(self, row: int, col: int):
+        index = 0
+        for row_idx, row_tiles in enumerate(self.tile_rows):
+            if row_idx == row:
+                return index + col
+            index += len(row_tiles)
+        return 0
+
+    def current_tile(self):
+        if not self.tile_rows:
+            return None
+        row = max(0, min(self.current_row, len(self.tile_rows) - 1))
+        col = max(0, min(self.current_col, len(self.tile_rows[row]) - 1))
+        return self.tile_rows[row][col]
+
+    def focus_tile_at(self, row: int, col: int):
+        if not self.tile_rows:
+            return
+        row = max(0, min(row, len(self.tile_rows) - 1))
+        col = max(0, min(col, len(self.tile_rows[row]) - 1))
+        self.current_row = row
+        self.current_col = col
+        self.current_index = self._flat_index_for_position(row, col)
+        self.tile_rows[row][col].setFocus()
+
+    def focus_first_tile(self):
+        if not self.tile_rows:
+            return
+        self.focus_tile_at(0, 0)
+
+    def focus_entry_tile(self, kind: str, item):
+        for row_idx, row_tiles in enumerate(self.tile_rows):
+            for col_idx, tile in enumerate(row_tiles):
+                if tile.entry_kind == kind and tile.entry_item is item:
+                    self.focus_tile_at(row_idx, col_idx)
+                    return True
+        return False
 
     def get_auto_launch_options(self):
         options = []
@@ -1866,7 +2115,7 @@ class LauncherWindow(QMainWindow):
 
         self.populate_tiles()
         if self.tiles:
-            self.tiles[0].setFocus()
+            self.focus_first_tile()
         QMessageBox.information(self, "Saved", f"{values['name']} has been updated.")
 
     def prompt_delete_entry(self, kind: str, app):
@@ -1895,7 +2144,7 @@ class LauncherWindow(QMainWindow):
 
         self.populate_tiles()
         if self.tiles:
-            self.tiles[0].setFocus()
+            self.focus_first_tile()
 
     def open_remote_settings(self):
         auth = self.config.get("auth", {})
@@ -1969,9 +2218,7 @@ class LauncherWindow(QMainWindow):
             return
 
         self.populate_tiles()
-        if self.tiles:
-            self.current_index = max(len(self.tiles) - 2, 0)
-            self.tiles[self.current_index].setFocus()
+        self.focus_entry_tile("native", native_apps[-1])
         QMessageBox.information(self, "Added", f"{name.strip()} is now available in Apps.")
 
     def add_web_service(self, name: str, url: str):
@@ -1988,9 +2235,7 @@ class LauncherWindow(QMainWindow):
             return
 
         self.populate_tiles()
-        if self.tiles:
-            self.current_index = max(len(self.tiles) - 2, 0)
-            self.tiles[self.current_index].setFocus()
+        self.focus_entry_tile("web", web_apps[-1])
         QMessageBox.information(self, "Added", f"{name.strip()} is now available in Apps.")
 
     def keyPressEvent(self, event):
@@ -2020,6 +2265,8 @@ class LauncherWindow(QMainWindow):
             self.ws_server.stop()
         if hasattr(self, "input_grabber") and self.input_grabber:
             self.input_grabber.stop_grabbing()
+        if hasattr(self, "_icon_pool") and self._icon_pool:
+            self._icon_pool.shutdown(wait=False, cancel_futures=True)
         event.accept()
 
     def queue_remote_action(self, action):
@@ -2140,9 +2387,7 @@ class LauncherWindow(QMainWindow):
                 return True
 
             if action in ("BACK", "HOME"):
-                self.current_index = 0
-                if self.tiles:
-                    self.tiles[0].setFocus()
+                self.focus_first_tile()
                 return True
 
         qt_action_map = {
@@ -2212,13 +2457,11 @@ class LauncherWindow(QMainWindow):
 
         if action == "BACK":
             # On launcher this returns to start tile
-            self.current_index = 0
-            self.tiles[0].setFocus()
+            self.focus_first_tile()
             return
 
         if action == "HOME":
-            self.current_index = 0
-            self.tiles[0].setFocus()
+            self.focus_first_tile()
             return
 
         if action in ("CLOSE", "EXIT", "STOP", "CLOSE_APP"):
@@ -2468,8 +2711,9 @@ class LauncherWindow(QMainWindow):
         self.activateWindow()
         QApplication.restoreOverrideCursor()
         self.auto_launch_paused = False
-        if self.tiles:
-            self.tiles[self.current_index].setFocus()
+        current_tile = self.current_tile()
+        if current_tile:
+            current_tile.setFocus()
         self.reset_auto_launch_timer()
 
     def toggle_auto_launch_pause(self):
@@ -2586,39 +2830,66 @@ class LauncherWindow(QMainWindow):
         self.auto_launch_cancel_button.show()
 
     def navigate(self, direction: str):
-        if not self.tiles:
+        if not self.tile_rows:
             return
 
-        max_idx = len(self.tiles) - 1
-        row_count = COLUMN_COUNT
-        old = self.current_index
-
         if direction == "RIGHT":
-            self.current_index = min(old + 1, max_idx)
+            target_row = self.current_row
+            target_col = min(self.current_col + 1, len(self.tile_rows[target_row]) - 1)
         elif direction == "LEFT":
-            self.current_index = max(old - 1, 0)
+            target_row = self.current_row
+            target_col = max(self.current_col - 1, 0)
         elif direction == "DOWN":
-            self.current_index = min(old + row_count, max_idx)
+            target_row = min(self.current_row + 1, len(self.tile_rows) - 1)
+            target_col = min(self.current_col, len(self.tile_rows[target_row]) - 1)
         elif direction == "UP":
-            self.current_index = max(old - row_count, 0)
+            target_row = max(self.current_row - 1, 0)
+            target_col = min(self.current_col, len(self.tile_rows[target_row]) - 1)
+        else:
+            return
 
-        self.tiles[self.current_index].setFocus()
+        self.focus_tile_at(target_row, target_col)
         self.ensure_current_tile_visible()
         self.reset_auto_launch_timer()
 
     def ensure_current_tile_visible(self):
-        if not hasattr(self, "tile_scroll") or not self.tiles:
+        if not hasattr(self, "tile_scroll") or not self.tile_rows:
             return
-        current_tile = self.tiles[self.current_index]
-        self.tile_scroll.ensureWidgetVisible(current_tile, 24, 24)
+        current_tile = self.current_tile()
+        if not current_tile or not current_tile.card_shell:
+            return
+
+        section = current_tile.section_widget
+        outer_scrollbar = self.tile_scroll.verticalScrollBar()
+        if section is not None:
+            target_y = max(0, section.y() - (self.tile_scroll.viewport().height() // 4))
+            vertical_anim = QPropertyAnimation(outer_scrollbar, b"value", self)
+            vertical_anim.setDuration(220)
+            vertical_anim.setStartValue(outer_scrollbar.value())
+            vertical_anim.setEndValue(target_y)
+            vertical_anim.setEasingCurve(QEasingCurve.OutCubic)
+            vertical_anim.start()
+            self._scroll_anim = vertical_anim
+
+        row_scroll = current_tile.row_scroll
+        if row_scroll is not None:
+            row_scrollbar = row_scroll.horizontalScrollBar()
+            card_x = current_tile.card_shell.x()
+            target_x = max(0, card_x - (row_scroll.viewport().width() // 5))
+            horizontal_anim = QPropertyAnimation(row_scrollbar, b"value", self)
+            horizontal_anim.setDuration(180)
+            horizontal_anim.setStartValue(row_scrollbar.value())
+            horizontal_anim.setEndValue(target_x)
+            horizontal_anim.setEasingCurve(QEasingCurve.OutCubic)
+            horizontal_anim.start()
+            self._row_scroll_anim = horizontal_anim
 
     def activate_current(self):
-        if not self.tiles:
+        widget = self.current_tile()
+        if widget is None:
             return
         self.auto_launch_timer.stop()
-        widget = self.tiles[self.current_index]
-        if widget:
-            widget.click()
+        widget.click()
 
     def launch_app(self, item, kind: str):
         self.auto_launch_timer.stop()
