@@ -2119,12 +2119,7 @@ class LauncherWindow(QMainWindow):
                 
                 if item_id == app_id:
                     logging.info("Launching app: %s (%s)", app_id, entry["kind"])
-                    
-                    if entry["kind"] == "native":
-                        self.launch_native_app(item)
-                    elif entry["kind"] == "web":
-                        self.launch_web_app(item)
-                    
+                    self.launch_app(item, entry["kind"])
                     return
         
         logging.warning("App not found: %s", app_id)
