@@ -694,7 +694,7 @@ export default function RemoteScreen() {
   const showLoginScreen = !hasSavedSetup;
   const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
   const tabItems: { key: TabType; label: string; icon: ComponentProps<typeof Ionicons>['name'] }[] = [
-    { key: 'remote', label: 'Remote', icon: 'radio-button-on' },
+    { key: 'remote', label: 'Remote', icon: 'phone-portrait-outline' },
     { key: 'apps', label: 'Apps', icon: 'grid' },
     { key: 'keyboard', label: 'Keyboard', icon: 'text' },
     { key: 'touchpad', label: 'Touchpad', icon: 'hand-left' },

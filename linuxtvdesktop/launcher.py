@@ -1045,8 +1045,8 @@ class WebSocketControlServer(threading.Thread):
 
 
 class TileButton(QPushButton):
-    SHELL_PADDING_X = 12
-    SHELL_PADDING_Y = 12
+    SHELL_PADDING_X = 14
+    SHELL_PADDING_Y = 14
 
     def __init__(self, name: str, icon_path: str, tooltip: str = "", variant: str = "default", subtitle: str = ""):
         button_text = name if not subtitle else f"{name}\n{subtitle}"
@@ -1054,7 +1054,7 @@ class TileButton(QPushButton):
         self.variant = variant
         self.title = name
         self.subtitle = subtitle
-        self.base_size = QSize(380, 214)
+        self.base_size = QSize(400, 230)
         self.shell_size = QSize(
             self.base_size.width() + (self.SHELL_PADDING_X * 2),
             self.base_size.height() + (self.SHELL_PADDING_Y * 2),
@@ -1067,7 +1067,7 @@ class TileButton(QPushButton):
         )
         self._focus_rect = QRect(0, 0, self.shell_size.width(), self.shell_size.height())
         self._anim = QPropertyAnimation(self, b"geometry", self)
-        self._anim.setDuration(160)
+        self._anim.setDuration(250)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
         self.card_shell = None
         self.row_scroll = None
@@ -1078,8 +1078,8 @@ class TileButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setMinimumSize(self.base_size)
         self.setMaximumSize(self.shell_size)
-        self.setFont(QFont("Sans Serif", 18, QFont.Bold))
-        self.setIconSize(QSize(120, 120))
+        self.setFont(QFont("Sans Serif", 19, QFont.Bold))
+        self.setIconSize(QSize(130, 130))
         self.set_tile_icon(icon_path)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
@@ -1171,9 +1171,9 @@ class AppCard(QWidget):
     def resizeEvent(self, event):
         self.tile_button.update_geometry_targets(self.rect())
         if self.edit_button is not None:
-            self.edit_button.move(self.width() - self.edit_button.width() - 14, 14)
+            self.edit_button.move(self.width() - self.edit_button.width() - 16, 16)
         if self.delete_button is not None:
-            self.delete_button.move(self.width() - self.delete_button.width() - 14, 64)
+            self.delete_button.move(self.width() - self.delete_button.width() - 16, 68)
         super().resizeEvent(event)
 
 
@@ -1256,71 +1256,85 @@ class AddItemDialog(QDialog):
         self.setStyleSheet(
             """
             QDialog {
-                background-color: #161b22;
-                border: 1px solid #30363d;
-                border-radius: 20px;
+                background-color: #1a1a1a;
+                border: 2px solid #333333;
+                border-radius: 16px;
             }
             QLabel#dialogTitle {
-                color: #f0f6fc;
+                color: #ffffff;
             }
             QLabel#dialogSubtitle {
-                color: #8b949e;
+                color: #bdbdbd;
             }
             QLabel#dialogFieldLabel {
-                color: #c9d1d9;
+                color: #e0e0e0;
                 font-weight: 600;
                 padding-top: 6px;
             }
             QLabel#dialogHelper {
-                color: #8b949e;
+                color: #9e9e9e;
                 padding-top: 4px;
             }
             QLineEdit, QComboBox {
-                background-color: #0d1117;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
+                background-color: #0d0d0d;
+                color: #e8e8e8;
+                border: 2px solid #333333;
                 border-radius: 12px;
-                padding: 12px 16px;
+                padding: 14px 18px;
                 min-height: 24px;
+                font-size: 15px;
             }
             QLineEdit:focus, QComboBox:focus {
-                border: 2px solid #58a6ff;
+                border: 2px solid #e53935;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 26px;
+                width: 28px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1a1a1a;
+                color: #e8e8e8;
+                border: 2px solid #333333;
+                selection-background-color: #e53935;
+                selection-color: #ffffff;
             }
             QPushButton[tileVariant="dialogSecondary"] {
-                background-color: #21262d;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #e0e0e0;
+                border: 2px solid #444444;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 500;
             }
             QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: #30363d;
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #2a2a2a);
+                border: 2px solid #e53935;
             }
             QPushButton[tileVariant="dialogSecondary"]:focus {
-                border: 2px solid #58a6ff;
+                border: 2px solid #ff5252;
             }
             QPushButton[tileVariant="accent"] {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #238636, stop:1 #1a7f37);
+                    stop:0 #e53935, stop:1 #c62828);
                 color: #ffffff;
-                border: 1px solid #2ea043;
+                border: 2px solid #ff5252;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 600;
             }
             QPushButton[tileVariant="accent"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2ea043, stop:1 #238636);
-                border: 1px solid #3fb950;
+                    stop:0 #ff5252, stop:1 #e53935);
+                border: 2px solid #ff867f;
             }
             QPushButton[tileVariant="accent"]:focus {
-                border: 2px solid #3fb950;
+                border: 2px solid #ffffff;
             }
             """
         )
@@ -1383,39 +1397,47 @@ class ConfirmDialog(QDialog):
         self.setStyleSheet(
             """
             QDialog {
-                background-color: #161b22;
-                border: 1px solid #30363d;
-                border-radius: 20px;
+                background-color: #1a1a1a;
+                border: 2px solid #333333;
+                border-radius: 16px;
             }
             QLabel#dialogTitle {
-                color: #f0f6fc;
+                color: #ffffff;
             }
             QLabel#dialogSubtitle {
-                color: #8b949e;
+                color: #bdbdbd;
             }
             QPushButton[tileVariant="dialogSecondary"] {
-                background-color: #21262d;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #e0e0e0;
+                border: 2px solid #444444;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 500;
             }
             QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: #30363d;
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #2a2a2a);
+                border: 2px solid #e53935;
             }
             QPushButton[tileVariant="danger"] {
-                background-color: #da3633;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e53935, stop:1 #c62828);
                 color: #ffffff;
-                border: 1px solid #f85149;
+                border: 2px solid #ff5252;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 600;
             }
             QPushButton[tileVariant="danger"]:hover {
-                background-color: #f85149;
-                border: 1px solid #ff7b72;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff5252, stop:1 #e53935);
+                border: 2px solid #ff867f;
             }
             """
         )
@@ -1529,67 +1551,74 @@ class SettingsDialog(QDialog):
         self.setStyleSheet(
             """
             QDialog {
-                background-color: #161b22;
-                border: 1px solid #30363d;
-                border-radius: 20px;
+                background-color: #1a1a1a;
+                border: 2px solid #333333;
+                border-radius: 16px;
             }
             QLabel#dialogTitle {
-                color: #f0f6fc;
+                color: #ffffff;
             }
             QLabel#dialogSection {
-                color: #c9d1d9;
+                color: #e0e0e0;
                 padding-top: 8px;
                 font-weight: 600;
             }
             QLabel#dialogSubtitle {
-                color: #8b949e;
+                color: #bdbdbd;
             }
             QLineEdit, QComboBox {
-                background-color: #0d1117;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
+                background-color: #0d0d0d;
+                color: #e8e8e8;
+                border: 2px solid #333333;
                 border-radius: 12px;
-                padding: 10px 14px;
+                padding: 12px 16px;
                 font-size: 15px;
             }
             QLineEdit:focus, QComboBox:focus {
-                border: 2px solid #58a6ff;
+                border: 2px solid #e53935;
             }
             QComboBox::drop-down {
                 border: none;
-                width: 30px;
+                width: 32px;
             }
             QComboBox QAbstractItemView {
-                background-color: #161b22;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
-                selection-background-color: #1f6feb;
+                background-color: #1a1a1a;
+                color: #e8e8e8;
+                border: 2px solid #333333;
+                selection-background-color: #e53935;
+                selection-color: #ffffff;
             }
             QPushButton[tileVariant="dialogSecondary"] {
-                background-color: #21262d;
-                color: #c9d1d9;
-                border: 1px solid #30363d;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #e0e0e0;
+                border: 2px solid #444444;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 500;
             }
             QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: #30363d;
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #2a2a2a);
+                border: 2px solid #e53935;
             }
             QPushButton[tileVariant="accent"] {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #238636, stop:1 #1a7f37);
+                    stop:0 #e53935, stop:1 #c62828);
                 color: #ffffff;
-                border: 1px solid #2ea043;
+                border: 2px solid #ff5252;
                 border-radius: 12px;
-                padding: 12px 20px;
-                min-width: 100px;
+                padding: 14px 24px;
+                min-width: 110px;
+                font-size: 15px;
+                font-weight: 600;
             }
             QPushButton[tileVariant="accent"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2ea043, stop:1 #238636);
-                border: 1px solid #3fb950;
+                    stop:0 #ff5252, stop:1 #e53935);
+                border: 2px solid #ff867f;
             }
             """
         )
@@ -1695,27 +1724,23 @@ class LauncherWindow(QMainWindow):
         central = QWidget()
         central.setObjectName("centralShell")
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(40, 32, 40, 24)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(48, 40, 48, 32)
+        main_layout.setSpacing(20)
 
         hero = QWidget()
         hero.setObjectName("heroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(24, 16, 24, 16)
-        hero_layout.setSpacing(0)
+        hero_layout.setContentsMargins(32, 24, 32, 24)
+        hero_layout.setSpacing(8)
 
         hero_top_row = QHBoxLayout()
         hero_top_row.setContentsMargins(0, 0, 0, 0)
-        hero_top_row.setSpacing(12)
-
-        header_spacer = QWidget()
-        header_spacer.setFixedSize(40, 40)
-        hero_top_row.addWidget(header_spacer)
+        hero_top_row.setSpacing(16)
 
         hero_top_row.addStretch(1)
         title = QLabel("LinuxTV")
         title.setObjectName("heroTitle")
-        title.setFont(QFont("Sans Serif", 34, QFont.Bold))
+        title.setFont(QFont("Sans Serif", 42, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         hero_top_row.addWidget(title)
         hero_top_row.addStretch(1)
@@ -1725,10 +1750,19 @@ class LauncherWindow(QMainWindow):
         settings_button.setText("⚙")
         settings_button.setToolTip("Open LinuxTV settings")
         settings_button.setCursor(Qt.PointingHandCursor)
-        settings_button.setFixedSize(40, 40)
+        settings_button.setFixedSize(48, 48)
+        settings_button.setFont(QFont("Sans Serif", 20))
         settings_button.clicked.connect(self.open_remote_settings)
         hero_top_row.addWidget(settings_button)
         hero_layout.addLayout(hero_top_row)
+        
+        # Add a subtitle
+        subtitle = QLabel("Your Apps & Websites")
+        subtitle.setObjectName("heroSubtitle")
+        subtitle.setFont(QFont("Sans Serif", 16))
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("color: #bdbdbd; letter-spacing: 0.5px;")
+        hero_layout.addWidget(subtitle)
         main_layout.addWidget(hero)
 
         scroll = QScrollArea()
@@ -1748,10 +1782,10 @@ class LauncherWindow(QMainWindow):
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
 
-        footer = QLabel("Arrows move • Enter opens • Use the Add App tile to add apps or sites • Esc exits LinuxTV")
+        footer = QLabel("Navigate with arrows • Select with Enter • Add apps with the Add App tile • Exit with Esc")
         footer.setObjectName("footerHint")
         footer.setWordWrap(True)
-        footer.setFont(QFont("Sans Serif", 14))
+        footer.setFont(QFont("Sans Serif", 15))
         footer.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(footer)
 
@@ -1788,38 +1822,43 @@ class LauncherWindow(QMainWindow):
         self.setStyleSheet(
             """
             QMainWindow {
-                background: #0a0e17;
+                background: #0d0d0d;
             }
             QWidget#centralShell {
                 background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #0d1117, stop:0.5 #0f1419, stop:1 #0a0e17);
-                color: #e6edf3;
+                    stop:0 #0a0a0a, stop:0.5 #111111, stop:1 #0d0d0d);
+                color: #f5f5f5;
             }
             QWidget#heroCard {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #161b22, stop:0.5 #1c2128, stop:1 #161b22);
-                border: 1px solid #30363d;
-                border-radius: 20px;
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #1a1a1a, stop:0.5 #222222, stop:1 #1a1a1a);
+                border: 1px solid #333333;
+                border-radius: 16px;
             }
             QToolButton#settingsButton {
-                background-color: rgba(33, 38, 45, 0.95);
-                color: #c9d1d9;
-                border: 1px solid #3a424c;
-                border-radius: 18px;
-                font-size: 16px;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                border-radius: 20px;
+                font-size: 18px;
                 padding-bottom: 1px;
             }
             QToolButton#settingsButton:hover {
-                background-color: rgba(48, 54, 61, 0.98);
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e53935, stop:1 #c62828);
+                border: 1px solid #ff5252;
+                color: #ffffff;
             }
             QToolButton#settingsButton:pressed {
-                background-color: rgba(56, 63, 71, 1);
+                background-color: #b71c1c;
+                border: 1px solid #e53935;
             }
             QLabel#heroTitle {
-                color: #f0f6fc;
+                color: #ffffff;
                 font-weight: bold;
-                letter-spacing: 0.5px;
+                letter-spacing: 1px;
+                font-size: 36px;
             }
             QScrollArea#tileScroll, QWidget#tileContainer {
                 background: transparent;
@@ -1829,10 +1868,11 @@ class LauncherWindow(QMainWindow):
                 background: transparent;
             }
             QLabel[rowHeading="true"] {
-                color: #f0f6fc;
-                font-size: 22px;
+                color: #ffffff;
+                font-size: 24px;
                 font-weight: bold;
-                padding: 8px 8px 0 8px;
+                padding: 12px 8px 8px 8px;
+                letter-spacing: 0.5px;
             }
             QScrollArea[rowScroll="true"] {
                 background: transparent;
@@ -1856,115 +1896,131 @@ class LauncherWindow(QMainWindow):
             }
             QPushButton[tileVariant="default"] {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #21262d, stop:1 #161b22);
-                color: #c9d1d9;
-                border: 1px solid #30363d;
-                border-radius: 22px;
-                padding: 26px 30px;
-                padding-left: 34px;
-                padding-right: 34px;
-                padding-top: 42px;
-                padding-bottom: 30px;
+                    stop:0 #1e1e1e, stop:1 #151515);
+                color: #e8e8e8;
+                border: 2px solid #333333;
+                border-radius: 16px;
+                padding: 24px 28px;
+                padding-left: 32px;
+                padding-right: 32px;
+                padding-top: 40px;
+                padding-bottom: 28px;
                 text-align: left;
                 font-size: 18px;
+                font-weight: 500;
             }
             QPushButton[tileVariant="default"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #30363d, stop:1 #21262d);
-                border: 1px solid #58a6ff;
+                    stop:0 #2a2a2a, stop:1 #1e1e1e);
+                border: 2px solid #e53935;
             }
             QPushButton[tileVariant="default"]:focus {
-                border: 2px solid #58a6ff;
+                border: 3px solid #ff5252;
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1f6feb, stop:1 #1a5fb4);
+                    stop:0 #e53935, stop:1 #c62828);
                 color: #ffffff;
+                font-weight: bold;
             }
             QPushButton[tileVariant="accent"] {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #238636, stop:1 #1a7f37);
+                    stop:0 #e53935, stop:1 #c62828);
                 color: #ffffff;
-                border: 1px solid #2ea043;
-                border-radius: 22px;
-                padding: 26px 30px;
-                padding-left: 34px;
-                padding-right: 34px;
-                padding-top: 42px;
-                padding-bottom: 30px;
+                border: 2px solid #ff5252;
+                border-radius: 16px;
+                padding: 24px 28px;
+                padding-left: 32px;
+                padding-right: 32px;
+                padding-top: 40px;
+                padding-bottom: 28px;
                 text-align: left;
                 font-size: 18px;
+                font-weight: 600;
             }
             QPushButton[tileVariant="accent"]:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2ea043, stop:1 #238636);
-                border: 1px solid #3fb950;
+                    stop:0 #ff5252, stop:1 #e53935);
+                border: 2px solid #ff867f;
             }
             QPushButton[tileVariant="accent"]:focus {
-                border: 2px solid #3fb950;
+                border: 3px solid #ffffff;
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3fb950, stop:1 #2ea043);
+                    stop:0 #ff5252, stop:1 #e53935);
             }
             QWidget#appCardShell {
                 background: transparent;
             }
             QToolButton#editButton {
-                background-color: rgba(33, 38, 45, 0.95);
-                color: #8b949e;
-                border: 1px solid #30363d;
-                border-radius: 14px;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #bdbdbd;
+                border: 1px solid #444444;
+                border-radius: 16px;
                 font-size: 18px;
                 padding-bottom: 2px;
             }
             QToolButton#editButton:hover {
-                background-color: rgba(48, 54, 61, 0.98);
-                color: #c9d1d9;
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a, stop:1 #2a2a2a);
+                color: #ffffff;
+                border: 1px solid #e53935;
             }
             QToolButton#editButton:pressed {
-                background-color: rgba(56, 63, 71, 1);
+                background-color: #1f1f1f;
+                border: 1px solid #ff5252;
             }
             QToolButton#deleteButton {
-                background-color: rgba(48, 27, 30, 0.95);
-                color: #f85149;
-                border: 1px solid #da3633;
-                border-radius: 14px;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3d1a1a, stop:1 #2d1212);
+                color: #ff5252;
+                border: 1px solid #c62828;
+                border-radius: 16px;
                 font-size: 18px;
             }
             QToolButton#deleteButton:hover {
-                background-color: rgba(63, 35, 39, 0.98);
-                border: 1px solid #f85149;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4d2424, stop:1 #3d1a1a);
+                border: 1px solid #ff5252;
             }
             QToolButton#deleteButton:pressed {
-                background-color: rgba(78, 43, 48, 1);
+                background-color: #2d1212;
+                border: 1px solid #e53935;
             }
             QPushButton[hasSubtitle="true"] {
-                padding-top: 20px;
-                padding-bottom: 20px;
+                padding-top: 18px;
+                padding-bottom: 18px;
             }
             QLabel#footerHint {
-                color: #8b949e;
-                padding: 8px 16px;
-                font-size: 14px;
+                color: #9e9e9e;
+                padding: 12px 20px;
+                font-size: 15px;
+                letter-spacing: 0.3px;
             }
             QLabel#autoLaunchStatus {
-                color: #58a6ff;
-                padding: 0 16px 10px 16px;
-                font-size: 14px;
+                color: #ff5252;
+                padding: 0 20px 12px 20px;
+                font-size: 15px;
+                font-weight: 500;
             }
             QPushButton#autoLaunchCancelButton {
-                background-color: rgba(33, 38, 45, 0.95);
-                color: #c9d1d9;
-                border: 1px solid #30363d;
-                border-radius: 14px;
-                padding: 10px 18px;
-                min-width: 150px;
-                font-size: 14px;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a, stop:1 #1f1f1f);
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                border-radius: 16px;
+                padding: 12px 20px;
+                min-width: 160px;
+                font-size: 15px;
+                font-weight: 500;
             }
             QPushButton#autoLaunchCancelButton:hover {
-                background-color: rgba(48, 54, 61, 0.98);
-                border: 1px solid #58a6ff;
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #e53935, stop:1 #c62828);
+                border: 1px solid #ff5252;
+                color: #ffffff;
             }
             QPushButton#autoLaunchCancelButton:pressed {
-                background-color: rgba(56, 63, 71, 1);
+                background-color: #b71c1c;
+                border: 1px solid #e53935;
             }
             """
         )
@@ -2004,13 +2060,13 @@ class LauncherWindow(QMainWindow):
             row_scroll.setWidgetResizable(False)
             row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            row_scroll.setFixedHeight(270)
+            row_scroll.setFixedHeight(290)
 
             row_widget = QWidget()
             row_widget.setProperty("rowContent", "true")
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(8, 6, 8, 6)
-            row_layout.setSpacing(24)
+            row_layout.setContentsMargins(12, 8, 12, 8)
+            row_layout.setSpacing(28)
 
             row_tiles = []
             for entry in entries:
@@ -2071,12 +2127,12 @@ class LauncherWindow(QMainWindow):
         add_row_scroll.setWidgetResizable(False)
         add_row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         add_row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        add_row_scroll.setFixedHeight(270)
+        add_row_scroll.setFixedHeight(290)
         add_row_widget = QWidget()
         add_row_widget.setProperty("rowContent", "true")
         add_row_layout = QHBoxLayout(add_row_widget)
-        add_row_layout.setContentsMargins(8, 6, 8, 6)
-        add_row_layout.setSpacing(24)
+        add_row_layout.setContentsMargins(12, 8, 12, 8)
+        add_row_layout.setSpacing(28)
         add_card = AppCard(add_tile, show_actions=False)
         add_tile.card_shell = add_card
         add_tile.row_scroll = add_row_scroll
