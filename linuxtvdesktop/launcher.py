@@ -1755,14 +1755,6 @@ class LauncherWindow(QMainWindow):
         settings_button.clicked.connect(self.open_remote_settings)
         hero_top_row.addWidget(settings_button)
         hero_layout.addLayout(hero_top_row)
-        
-        # Add a subtitle
-        subtitle = QLabel("Your Apps & Websites")
-        subtitle.setObjectName("heroSubtitle")
-        subtitle.setFont(QFont("Sans Serif", 16))
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #bdbdbd; letter-spacing: 0.5px;")
-        hero_layout.addWidget(subtitle)
         main_layout.addWidget(hero)
 
         scroll = QScrollArea()
