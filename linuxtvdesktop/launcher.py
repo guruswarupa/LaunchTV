@@ -1824,6 +1824,8 @@ class LauncherWindow(QMainWindow):
         main_layout.addLayout(auto_launch_status_row)
 
         self.setCentralWidget(central)
+        # Install event filter to capture wheel events for touchpad scrolling
+        central.installEventFilter(self)
         self.apply_theme()
 
         if self.tiles:
@@ -2604,6 +2606,14 @@ class LauncherWindow(QMainWindow):
                 self.navigate("LEFT")
         
         event.accept()
+
+    def eventFilter(self, obj, event):
+        """Event filter to capture wheel events from child widgets."""
+        if event.type() == QEvent.Wheel:
+            # Forward wheel event to the window's wheelEvent
+            self.wheelEvent(event)
+            return True
+        return super().eventFilter(obj, event)
 
     def closeEvent(self, event):
         if hasattr(self, "ws_server") and self.ws_server:
