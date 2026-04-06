@@ -437,14 +437,19 @@ export default function RemoteScreen() {
       return;
     }
 
-    const appData = {
+    const payload = {
       type: 'add_app',
       kind: newAppType,
       name: newAppName.trim(),
       ...(newAppType === 'native' ? { command: newAppCommand.trim() } : { url: newAppUrl.trim() }),
     };
 
-    repositoryRef.current?.sendAction(JSON.stringify(appData));
+    // Send raw JSON message directly
+    const message = JSON.stringify(payload);
+    if (repositoryRef.current) {
+      // Access internal send method
+      (repositoryRef.current as any).sendPayload?.(payload, 'Add App');
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     
     // Reset form
@@ -469,12 +474,15 @@ export default function RemoteScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            const appData = {
+            const payload = {
               type: 'remove_app',
               id: appId,
             };
 
-            repositoryRef.current?.sendAction(JSON.stringify(appData));
+            // Send raw JSON message directly
+            if (repositoryRef.current) {
+              (repositoryRef.current as any).sendPayload?.(payload, 'Remove App');
+            }
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             
             Alert.alert('App Removed', `"${appName}" has been removed.`);
@@ -1362,10 +1370,19 @@ export default function RemoteScreen() {
         onRequestClose={() => setIsMenuVisible(false)}>
         <Pressable style={styles.menuOverlay} onPress={() => setIsMenuVisible(false)}>
           <Pressable style={styles.menuSheet} onPress={() => undefined}>
+            {/* Header */}
+            <View style={styles.menuHeader}>
+              <Ionicons name="settings" size={24} color="#58a6ff" />
+              <Text style={styles.menuHeaderTitle}>Settings</Text>
+            </View>
+            
+            <View style={styles.menuDivider} />
+            
             {!repositoryState.isDemoMode ? (
               <>
+                {/* Systems Section */}
                 <View style={styles.menuSection}>
-                  <Text style={styles.menuSectionTitle}>Saved systems</Text>
+                  <Text style={styles.menuSectionTitle}>Systems</Text>
                   {savedSystems.map((system) => (
                     <Pressable
                       key={system.id}
@@ -1377,59 +1394,96 @@ export default function RemoteScreen() {
                       onPress={() => {
                         void switchToSystem(system);
                       }}>
-                      <View style={styles.systemRowText}>
-                        <Text style={styles.systemName}>{system.name}</Text>
-                        <Text style={styles.systemMeta}>
-                          {system.ipAddress}:{system.port}
-                        </Text>
+                      <View style={styles.systemRowLeft}>
+                        <Ionicons 
+                          name={system.id === activeSystemId ? "radio-button-on" : "radio-button-off"} 
+                          size={18} 
+                          color={system.id === activeSystemId ? "#3fb950" : "#8b949e"} 
+                        />
+                        <View style={styles.systemRowText}>
+                          <Text style={styles.systemName}>{system.name}</Text>
+                          <Text style={styles.systemMeta}>
+                            {system.ipAddress}:{system.port}
+                          </Text>
+                        </View>
                       </View>
-                      {system.id === activeSystemId ? (
-                        <Text style={styles.systemBadge}>Live</Text>
-                      ) : (
-                        <Text style={styles.systemSwapLabel}>Switch</Text>
+                      {system.id === activeSystemId && (
+                        <View style={styles.activeBadge}>
+                          <Text style={styles.activeBadgeText}>Active</Text>
+                        </View>
                       )}
                     </Pressable>
                   ))}
                 </View>
 
+                <View style={styles.menuDivider} />
+                
+                {/* System Actions */}
                 <Pressable
                   style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
                   onPress={openAddSystemEditor}>
-                  <Text style={styles.menuItemText}>Add another system</Text>
+                  <View style={styles.menuItemContent}>
+                    <Ionicons name="add-circle" size={20} color="#58a6ff" />
+                    <Text style={styles.menuItemText}>Add System</Text>
+                  </View>
                 </Pressable>
-                {activeSystem ? (
+                
+                {activeSystem && (
                   <Pressable
                     style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
                     onPress={openEditSystemEditor}>
-                    <Text style={styles.menuItemText}>Edit current system</Text>
+                    <View style={styles.menuItemContent}>
+                      <Ionicons name="create" size={20} color="#58a6ff" />
+                      <Text style={styles.menuItemText}>Edit System</Text>
+                    </View>
                   </Pressable>
-                ) : null}
-                {activeSystem ? (
+                )}
+                
+                {activeSystem && (
                   <Pressable
                     style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
                     onPress={confirmRemoveActiveSystem}>
-                    <Text style={styles.menuItemDangerText}>Remove current system</Text>
+                    <View style={styles.menuItemContent}>
+                      <Ionicons name="trash" size={20} color="#f85149" />
+                      <Text style={styles.menuItemDangerText}>Remove System</Text>
+                    </View>
                   </Pressable>
-                ) : null}
+                )}
+                
+                <View style={styles.menuDivider} />
               </>
             ) : null}
 
+            {/* Power Actions */}
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
               onPress={() => confirmPowerAction('SHUTDOWN')}>
-              <Text style={styles.menuItemText}>Shutdown</Text>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="power" size={20} color="#f85149" />
+                <Text style={styles.menuItemDangerText}>Shutdown</Text>
+              </View>
             </Pressable>
+            
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
               onPress={() => confirmPowerAction('REBOOT')}>
-              <Text style={styles.menuItemText}>Reboot</Text>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="refresh" size={20} color="#f85149" />
+                <Text style={styles.menuItemDangerText}>Reboot</Text>
+              </View>
             </Pressable>
+            
+            <View style={styles.menuDivider} />
+            
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
               onPress={confirmLogout}>
-              <Text style={styles.menuItemDangerText}>
-                {repositoryState.isDemoMode ? 'Exit Demo Mode' : 'Remove All Saved Systems'}
-              </Text>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="log-out" size={20} color="#f85149" />
+                <Text style={styles.menuItemDangerText}>
+                  {repositoryState.isDemoMode ? 'Exit Demo' : 'Remove All Systems'}
+                </Text>
+              </View>
             </Pressable>
           </Pressable>
         </Pressable>
@@ -2311,7 +2365,7 @@ const styles = StyleSheet.create({
   },
   menuOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10, 14, 23, 0.6)',
+    backgroundColor: 'rgba(10, 14, 23, 0.7)',
     justifyContent: 'flex-start',
     paddingTop: 80,
     paddingHorizontal: 20,
@@ -2319,27 +2373,64 @@ const styles = StyleSheet.create({
   },
   menuSheet: {
     width: '100%',
-    maxWidth: 360,
-    borderRadius: 16,
+    maxWidth: 320,
+    borderRadius: 20,
     backgroundColor: '#161b22',
     borderWidth: 1,
     borderColor: '#30363d',
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 16,
+  },
+  menuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#0d1117',
+  },
+  menuHeaderTitle: {
+    color: '#f0f6fc',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: '#21262d',
   },
   menuSection: {
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 8,
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#21262d',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 6,
   },
   menuSectionTitle: {
     color: '#8b949e',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.4,
     textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  systemRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  activeBadge: {
+    backgroundColor: '#238636',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  activeBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   systemRow: {
     flexDirection: 'row',
@@ -2381,8 +2472,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   menuItem: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 14,
+  },
+  menuItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   menuItemPressed: {
     backgroundColor: '#21262d',

@@ -2178,8 +2178,10 @@ class LauncherWindow(QMainWindow):
         self.config["native_apps"] = native_apps
         save_config(self.config_path, self.config)
         
-        # Refresh tiles to show the new app
-        QTimer.singleShot(500, self.populate_tiles)
+        logging.info("Added native app: %s (%s)", name, command)
+        
+        # Refresh tiles immediately
+        self.populate_tiles()
 
     def add_web_app(self, name: str, url: str):
         """Add a web app to config and save it"""
@@ -2191,8 +2193,10 @@ class LauncherWindow(QMainWindow):
         self.config["web_apps"] = web_apps
         save_config(self.config_path, self.config)
         
-        # Refresh tiles to show the new app
-        QTimer.singleShot(500, self.populate_tiles)
+        logging.info("Added web app: %s (%s)", name, url)
+        
+        # Refresh tiles immediately
+        self.populate_tiles()
 
     def remove_app_by_id(self, app_id: str):
         """Remove an app by its ID from config"""
@@ -2203,11 +2207,13 @@ class LauncherWindow(QMainWindow):
         for i, app in enumerate(native_apps):
             item_id = app.get("id", app.get("name", "")).lower().replace(" ", "_")
             if item_id == app_id_normalized:
+                app_name = app.get("name")
                 native_apps.pop(i)
                 self.config["native_apps"] = native_apps
                 save_config(self.config_path, self.config)
-                logging.info("Removed native app: %s", app.get("name"))
-                QTimer.singleShot(500, self.populate_tiles)
+                logging.info("Removed native app: %s", app_name)
+                # Refresh tiles immediately
+                self.populate_tiles()
                 return
         
         # Try to remove from web apps
@@ -2215,11 +2221,13 @@ class LauncherWindow(QMainWindow):
         for i, app in enumerate(web_apps):
             item_id = app.get("id", app.get("name", "")).lower().replace(" ", "_")
             if item_id == app_id_normalized:
+                app_name = app.get("name")
                 web_apps.pop(i)
                 self.config["web_apps"] = web_apps
                 save_config(self.config_path, self.config)
-                logging.info("Removed web app: %s", app.get("name"))
-                QTimer.singleShot(500, self.populate_tiles)
+                logging.info("Removed web app: %s", app_name)
+                # Refresh tiles immediately
+                self.populate_tiles()
                 return
         
         logging.warning("App not found for removal: %s", app_id)
