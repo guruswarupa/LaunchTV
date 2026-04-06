@@ -1,0 +1,44 @@
+# OSX
+#
+.DS_Store
+
+# Android/IntelliJ
+#
+build/
+.idea
+.gradle
+local.properties
+*.iml
+*.hprof
+.cxx/
+*.apk
+*.aab
+
+# Bundle artifacts
+*.jsbundle
+
+# Kotlin
+.kotlin/
+
+# Generated files
+captures/
+gradle-app.xml
+gradle.xml
+workspace.xml
+
+# Mobile tools for IDE
+.idea/modules.xml
+.idea/jarRepositories.xml
+.idea/compiler.xml
+.idea/libraries/
+
+# NDK
+obj/
+
+# IntelliJ
+*.iws
+*.ipr
+
+# Keystore files (uncomment if you want to exclude)
+# *.jks
+# *.keystore
