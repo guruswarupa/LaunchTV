@@ -498,6 +498,88 @@ def maintain_hdmi_audio(stop_event: threading.Event, duration_seconds: int = 20)
         stop_event.wait(2)
 
 
+def control_system_volume(action: str):
+    action = action.upper().strip()
+
+    wpctl = shutil.which("wpctl")
+    if wpctl:
+        if action == "VOLUME_UP":
+            result = subprocess.run(
+                [wpctl, "set-volume", "-l", "1.5", "@DEFAULT_AUDIO_SINK@", "5%+"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+        elif action == "VOLUME_DOWN":
+            result = subprocess.run(
+                [wpctl, "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+        elif action == "MUTE":
+            result = subprocess.run(
+                [wpctl, "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+
+    pactl = shutil.which("pactl")
+    if pactl:
+        if action == "VOLUME_UP":
+            result = subprocess.run(
+                [pactl, "set-sink-volume", "@DEFAULT_SINK@", "+5%"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+        elif action == "VOLUME_DOWN":
+            result = subprocess.run(
+                [pactl, "set-sink-volume", "@DEFAULT_SINK@", "-5%"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+        elif action == "MUTE":
+            result = subprocess.run(
+                [pactl, "set-sink-mute", "@DEFAULT_SINK@", "toggle"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return True
+
+    amixer = shutil.which("amixer")
+    if amixer:
+        if action == "VOLUME_UP":
+            result = subprocess.run([amixer, "set", "Master", "5%+"], check=False, capture_output=True, text=True)
+            if result.returncode == 0:
+                return True
+        elif action == "VOLUME_DOWN":
+            result = subprocess.run([amixer, "set", "Master", "5%-"], check=False, capture_output=True, text=True)
+            if result.returncode == 0:
+                return True
+        elif action == "MUTE":
+            result = subprocess.run([amixer, "set", "Master", "toggle"], check=False, capture_output=True, text=True)
+            if result.returncode == 0:
+                return True
+
+    logging.warning("No supported volume backend succeeded for action %s", action)
+    return False
+
+
 def process_tree_pids(root_pid: int):
     output = run_command(["ps", "-eo", "pid=,ppid="])
     children_by_parent = {}
@@ -2445,6 +2527,10 @@ class LauncherWindow(QMainWindow):
 
         if action in ("SHUTDOWN", "REBOOT"):
             request_system_power_action(action)
+            return
+
+        if action in ("VOLUME_UP", "VOLUME_DOWN", "MUTE"):
+            control_system_volume(action)
             return
 
         if action in ("UP", "DOWN", "LEFT", "RIGHT"):
