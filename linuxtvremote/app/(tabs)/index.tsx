@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
+import * as Haptics from 'expo-haptics';
 import {
   Alert,
   AppState,
@@ -17,12 +18,13 @@ import {
   ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
 
 import {
   DemoRepository,
   type AuthState,
   type ConnectionState,
-  type DemoApp,
   RealServerRepository,
   type RemoteRepository,
   type RepositoryState,
@@ -33,6 +35,8 @@ const PORT_KEY = 'linuxtv_remote_port';
 const USERNAME_KEY = 'linuxtv_remote_username';
 const PASSWORD_KEY = 'linuxtv_remote_password';
 const DEMO_MODE_KEY = 'linuxtv_remote_demo_mode';
+const SYSTEMS_KEY = 'linuxtv_remote_systems';
+const ACTIVE_SYSTEM_ID_KEY = 'linuxtv_remote_active_system_id';
 const DEFAULT_PORT = '8765';
 const REMOTE_REPEAT_DELAY_MS = 320;
 const REMOTE_REPEAT_INTERVAL_MS = 90;
@@ -42,7 +46,16 @@ type ScreenRepositoryState = RepositoryState & {
   status: ConnectionState;
 };
 
-type TabType = 'remote' | 'keyboard' | 'touchpad';
+type TabType = 'remote' | 'keyboard' | 'touchpad' | 'apps';
+
+type SavedSystem = {
+  id: string;
+  ipAddress: string;
+  name: string;
+  password: string;
+  port: string;
+  username: string;
+};
 
 const DEFAULT_REPOSITORY_STATE: ScreenRepositoryState = {
   authStatus: 'No saved credentials',
@@ -53,17 +66,66 @@ const DEFAULT_REPOSITORY_STATE: ScreenRepositoryState = {
   status: 'Disconnected',
 };
 
+const createSystemId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const buildSystemName = (name: string, ipAddress: string) => name.trim() || ipAddress.trim();
+
+const parseStoredSystems = (storedValue: string | null): SavedSystem[] => {
+  if (!storedValue) {
+    return [];
+  }
+
+  try {
+    const parsedValue = JSON.parse(storedValue) as unknown;
+    if (!Array.isArray(parsedValue)) {
+      return [];
+    }
+
+    return parsedValue
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return null;
+        }
+
+        const candidate = entry as Partial<SavedSystem>;
+        const ipAddress = candidate.ipAddress?.trim() ?? '';
+        if (!ipAddress) {
+          return null;
+        }
+
+        return {
+          id: candidate.id?.trim() || createSystemId(),
+          ipAddress,
+          name: buildSystemName(candidate.name ?? '', ipAddress),
+          password: candidate.password ?? '',
+          port: candidate.port?.trim() || DEFAULT_PORT,
+          username: candidate.username ?? '',
+        };
+      })
+      .filter((entry): entry is SavedSystem => Boolean(entry));
+  } catch {
+    return [];
+  }
+};
+
 export default function RemoteScreen() {
+  const [systemName, setSystemName] = useState('');
   const [ipAddress, setIpAddress] = useState('');
   const [port, setPort] = useState(DEFAULT_PORT);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [savedSystems, setSavedSystems] = useState<SavedSystem[]>([]);
+  const [activeSystemId, setActiveSystemId] = useState<string | null>(null);
+  const [editingSystemId, setEditingSystemId] = useState<string | null>(null);
   const [hasSavedSetup, setHasSavedSetup] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const [isSystemEditorVisible, setIsSystemEditorVisible] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('remote');
   const [keyboardDraft, setKeyboardDraft] = useState('');
-  const [demoApps, setDemoApps] = useState<DemoApp[]>([]);
+  const [volumeLevel, setVolumeLevel] = useState(50);
+  const [isMuted, setIsMuted] = useState(false);
+  const [serverApps, setServerApps] = useState<Array<{id: string; name: string; icon?: string}>>([]);
   const [repositoryState, setRepositoryState] = useState<ScreenRepositoryState>(
     DEFAULT_REPOSITORY_STATE
   );
@@ -82,7 +144,6 @@ export default function RemoteScreen() {
       ? new DemoRepository(applyRepositoryUpdate)
       : new RealServerRepository(applyRepositoryUpdate);
     repositoryRef.current = nextRepository;
-    setDemoApps(nextRepository.getDemoApps());
     return nextRepository;
   };
 
@@ -97,53 +158,158 @@ export default function RemoteScreen() {
     }
   };
 
+  const populateFormFromSystem = (system: SavedSystem | null) => {
+    setSystemName(system?.name ?? '');
+    setIpAddress(system?.ipAddress ?? '');
+    setPort(system?.port ?? DEFAULT_PORT);
+    setUsername(system?.username ?? '');
+    setPassword(system?.password ?? '');
+  };
+
+  const persistSystems = async (systems: SavedSystem[], nextActiveSystemId?: string | null) => {
+    const activeId =
+      nextActiveSystemId === undefined
+        ? activeSystemId
+        : nextActiveSystemId;
+    const activeSystem = systems.find((system) => system.id === activeId) ?? null;
+
+    if (systems.length) {
+      await SecureStore.setItemAsync(SYSTEMS_KEY, JSON.stringify(systems));
+    } else {
+      await SecureStore.deleteItemAsync(SYSTEMS_KEY);
+    }
+
+    if (activeSystem) {
+      await Promise.all([
+        SecureStore.setItemAsync(ACTIVE_SYSTEM_ID_KEY, activeSystem.id),
+        SecureStore.setItemAsync(HOST_KEY, activeSystem.ipAddress),
+        SecureStore.setItemAsync(PORT_KEY, activeSystem.port),
+        SecureStore.setItemAsync(USERNAME_KEY, activeSystem.username),
+        SecureStore.setItemAsync(PASSWORD_KEY, activeSystem.password),
+      ]);
+    } else {
+      await Promise.all([
+        SecureStore.deleteItemAsync(ACTIVE_SYSTEM_ID_KEY),
+        SecureStore.deleteItemAsync(HOST_KEY),
+        SecureStore.deleteItemAsync(PORT_KEY),
+        SecureStore.deleteItemAsync(USERNAME_KEY),
+        SecureStore.deleteItemAsync(PASSWORD_KEY),
+      ]);
+    }
+  };
+
+  const connectToSystem = async (system: SavedSystem) => {
+    const repository = createRepository(false);
+    applyRepositoryUpdate({
+      authStatus:
+        system.username.trim() && system.password
+          ? 'Saved credentials loaded'
+          : 'No saved credentials',
+      isDemoMode: false,
+      lastMessage: `Saved ${system.ipAddress}:${system.port}. Waiting for LinuxTV.`,
+    });
+
+    await repository.connect({
+      ipAddress: system.ipAddress,
+      password: system.password,
+      port: system.port,
+      username: system.username,
+    });
+  };
+
   const activateDemoMode = async (persist = true) => {
     const repository = createRepository(true);
     if (persist) {
-      await SecureStore.setItemAsync(DEMO_MODE_KEY, 'true');
+      await Promise.all([
+        SecureStore.setItemAsync(DEMO_MODE_KEY, 'true'),
+        persistSystems([], null),
+      ]);
     }
+    setSavedSystems([]);
+    setActiveSystemId(null);
+    populateFormFromSystem(null);
     setHasSavedSetup(true);
     setActiveTab('remote');
     setKeyboardDraft('');
     await repository.connect();
   };
 
-  const saveSetupAndConnect = async () => {
+  const switchToSystem = async (system: SavedSystem, persistActive = true) => {
+    clearRepeatTimers();
+    setIsMenuVisible(false);
+    setHasSavedSetup(true);
+    setActiveSystemId(system.id);
+    populateFormFromSystem(system);
+    setActiveTab('remote');
+    setKeyboardDraft('');
+
+    if (persistActive) {
+      await Promise.all([
+        SecureStore.deleteItemAsync(DEMO_MODE_KEY),
+        persistSystems(savedSystems, system.id),
+      ]);
+    }
+
+    await connectToSystem(system);
+  };
+
+  const resetEditorToActiveSystem = () => {
+    const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
+    setEditingSystemId(activeSystem?.id ?? null);
+    populateFormFromSystem(activeSystem);
+  };
+
+  const openAddSystemEditor = () => {
+    setIsMenuVisible(false);
+    setEditingSystemId(null);
+    populateFormFromSystem(null);
+    setIsSystemEditorVisible(true);
+  };
+
+  const openEditSystemEditor = () => {
+    setIsMenuVisible(false);
+    resetEditorToActiveSystem();
+    setIsSystemEditorVisible(true);
+  };
+
+  const saveSystemAndConnect = async () => {
     const cleanedIpAddress = ipAddress.trim();
     const cleanedPort = port.trim() || DEFAULT_PORT;
+    const cleanedUsername = username.trim();
+    const cleanedName = buildSystemName(systemName, cleanedIpAddress);
 
     if (!cleanedIpAddress) {
       Alert.alert('Missing address', 'Enter the LinuxTV IP address first.');
       return;
     }
 
-    await Promise.all([
-      SecureStore.setItemAsync(HOST_KEY, cleanedIpAddress),
-      SecureStore.setItemAsync(PORT_KEY, cleanedPort),
-      SecureStore.setItemAsync(USERNAME_KEY, username.trim()),
-      SecureStore.setItemAsync(PASSWORD_KEY, password),
-      SecureStore.deleteItemAsync(DEMO_MODE_KEY),
-    ]);
-
-    setIpAddress(cleanedIpAddress);
-    setPort(cleanedPort);
-    setHasSavedSetup(true);
-    setActiveTab('remote');
-
-    const repository = createRepository(false);
-    applyRepositoryUpdate({
-      authStatus:
-        username.trim() && password ? 'Saved credentials loaded' : 'No saved credentials',
-      isDemoMode: false,
-      lastMessage: `Saved ${cleanedIpAddress}:${cleanedPort}. Waiting for LinuxTV.`,
-    });
-
-    await repository.connect({
+    const systemId = editingSystemId ?? createSystemId();
+    const nextSystem: SavedSystem = {
+      id: systemId,
       ipAddress: cleanedIpAddress,
+      name: cleanedName,
       password,
       port: cleanedPort,
-      username: username.trim(),
-    });
+      username: cleanedUsername,
+    };
+
+    const existingIndex = savedSystems.findIndex((system) => system.id === systemId);
+    const nextSystems =
+      existingIndex >= 0
+        ? savedSystems.map((system) => (system.id === systemId ? nextSystem : system))
+        : [...savedSystems, nextSystem];
+
+    setSavedSystems(nextSystems);
+    setEditingSystemId(systemId);
+    setIsSystemEditorVisible(false);
+    setHasSavedSetup(true);
+
+    await Promise.all([
+      SecureStore.deleteItemAsync(DEMO_MODE_KEY),
+      persistSystems(nextSystems, systemId),
+    ]);
+
+    await switchToSystem(nextSystem, false);
   };
 
   const clearSavedSetup = async () => {
@@ -152,38 +318,80 @@ export default function RemoteScreen() {
     repositoryRef.current = null;
 
     await Promise.all([
-      SecureStore.deleteItemAsync(HOST_KEY),
-      SecureStore.deleteItemAsync(PORT_KEY),
-      SecureStore.deleteItemAsync(USERNAME_KEY),
-      SecureStore.deleteItemAsync(PASSWORD_KEY),
+      persistSystems([], null),
       SecureStore.deleteItemAsync(DEMO_MODE_KEY),
     ]);
 
-    setDemoApps([]);
+    setSavedSystems([]);
+    setActiveSystemId(null);
+    setEditingSystemId(null);
     setHasSavedSetup(false);
-    setIpAddress('');
-    setPort(DEFAULT_PORT);
-    setUsername('');
-    setPassword('');
+    setIsMenuVisible(false);
+    setIsSystemEditorVisible(false);
     setActiveTab('remote');
     setKeyboardDraft('');
+    populateFormFromSystem(null);
     setRepositoryState({
       ...DEFAULT_REPOSITORY_STATE,
-      lastMessage: 'Saved setup removed. Enter the LinuxTV info again.',
+      lastMessage: 'Saved systems removed. Enter the LinuxTV info again.',
     });
+  };
+
+  const removeSystem = async (systemId: string) => {
+    const nextSystems = savedSystems.filter((system) => system.id !== systemId);
+    const nextActiveSystem = nextSystems[0] ?? null;
+
+    setIsMenuVisible(false);
+    setIsSystemEditorVisible(false);
+
+    if (!nextActiveSystem) {
+      await clearSavedSetup();
+      return;
+    }
+
+    setSavedSystems(nextSystems);
+    await Promise.all([
+      SecureStore.deleteItemAsync(DEMO_MODE_KEY),
+      persistSystems(nextSystems, nextActiveSystem.id),
+    ]);
+    await switchToSystem(nextActiveSystem, false);
+  };
+
+  const confirmRemoveActiveSystem = () => {
+    const activeSystem = savedSystems.find((system) => system.id === activeSystemId);
+    if (!activeSystem) {
+      return;
+    }
+
+    Alert.alert(
+      'Remove system?',
+      savedSystems.length === 1
+        ? 'This will remove the last saved LinuxTV system from this phone.'
+        : `Remove ${activeSystem.name} from saved systems?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void removeSystem(activeSystem.id);
+          },
+        },
+      ]
+    );
   };
 
   const confirmLogout = () => {
     setIsMenuVisible(false);
     Alert.alert(
-      repositoryState.isDemoMode ? 'Exit demo mode?' : 'Logout?',
+      repositoryState.isDemoMode ? 'Exit demo mode?' : 'Remove all saved systems?',
       repositoryState.isDemoMode
         ? 'Return to the connection screen and leave the mock device.'
-        : 'This removes the saved IP address, port, username, and password from this phone.',
+        : 'This removes every saved LinuxTV system, including usernames and passwords, from this phone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: repositoryState.isDemoMode ? 'Exit Demo' : 'Logout',
+          text: repositoryState.isDemoMode ? 'Exit Demo' : 'Remove All',
           style: 'destructive',
           onPress: () => {
             void clearSavedSetup();
@@ -195,6 +403,41 @@ export default function RemoteScreen() {
 
   const sendAction = (action: string) => {
     repositoryRef.current?.sendAction(action);
+  };
+
+  const launchApp = (appId: string) => {
+    sendAction(`LAUNCH_APP:${appId}`);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const fetchApps = () => {
+    // Request apps from server
+    sendAction('GET_APPS');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const adjustVolume = (direction: 'up' | 'down') => {
+    if (direction === 'up') {
+      setVolumeLevel(prev => Math.min(prev + 5, 100));
+      sendAction('VOLUME_UP');
+    } else {
+      setVolumeLevel(prev => Math.max(prev - 5, 0));
+      sendAction('VOLUME_DOWN');
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const toggleMute = () => {
+    if (isMuted) {
+      // Unmute - send volume up to restore
+      sendAction('VOLUME_UP');
+      setIsMuted(false);
+    } else {
+      // Mute
+      sendAction('MUTE');
+      setIsMuted(true);
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
   const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT') => {
@@ -259,29 +502,45 @@ export default function RemoteScreen() {
     let active = true;
 
     const loadSavedSetup = async () => {
-      const [storedHost, storedPort, storedUsername, storedPassword, storedDemoMode] =
-        await Promise.all([
-          SecureStore.getItemAsync(HOST_KEY),
-          SecureStore.getItemAsync(PORT_KEY),
-          SecureStore.getItemAsync(USERNAME_KEY),
-          SecureStore.getItemAsync(PASSWORD_KEY),
-          SecureStore.getItemAsync(DEMO_MODE_KEY),
-        ]);
+      const [
+        storedSystemsValue,
+        storedActiveSystemId,
+        storedHost,
+        storedPort,
+        storedUsername,
+        storedPassword,
+        storedDemoMode,
+      ] = await Promise.all([
+        SecureStore.getItemAsync(SYSTEMS_KEY),
+        SecureStore.getItemAsync(ACTIVE_SYSTEM_ID_KEY),
+        SecureStore.getItemAsync(HOST_KEY),
+        SecureStore.getItemAsync(PORT_KEY),
+        SecureStore.getItemAsync(USERNAME_KEY),
+        SecureStore.getItemAsync(PASSWORD_KEY),
+        SecureStore.getItemAsync(DEMO_MODE_KEY),
+      ]);
 
       if (!active) {
         return;
       }
 
-      const nextHost = storedHost?.trim() ?? '';
-      const nextPort = storedPort?.trim() || DEFAULT_PORT;
-      const nextUsername = storedUsername ?? '';
-      const nextPassword = storedPassword ?? '';
       const savedDemoMode = storedDemoMode === 'true';
+      let nextSystems = parseStoredSystems(storedSystemsValue);
 
-      setIpAddress(nextHost);
-      setPort(nextPort);
-      setUsername(nextUsername);
-      setPassword(nextPassword);
+      if (!nextSystems.length && storedHost?.trim()) {
+        const migratedSystem: SavedSystem = {
+          id: createSystemId(),
+          ipAddress: storedHost.trim(),
+          name: buildSystemName('', storedHost.trim()),
+          password: storedPassword ?? '',
+          port: storedPort?.trim() || DEFAULT_PORT,
+          username: storedUsername ?? '',
+        };
+        nextSystems = [migratedSystem];
+        await persistSystems(nextSystems, migratedSystem.id);
+      }
+
+      setSavedSystems(nextSystems);
       setIsHydrated(true);
 
       if (savedDemoMode) {
@@ -290,24 +549,28 @@ export default function RemoteScreen() {
         return;
       }
 
-      setHasSavedSetup(Boolean(nextHost));
+      const nextActiveSystem =
+        nextSystems.find((system) => system.id === storedActiveSystemId) ?? nextSystems[0] ?? null;
+
+      setActiveSystemId(nextActiveSystem?.id ?? null);
+      populateFormFromSystem(nextActiveSystem);
+      setHasSavedSetup(Boolean(nextActiveSystem));
       setRepositoryState({
         ...DEFAULT_REPOSITORY_STATE,
         authStatus:
-          nextUsername && nextPassword ? 'Saved credentials loaded' : 'No saved credentials',
-        lastMessage: nextHost
-          ? `Saved ${nextHost}:${nextPort}. Waiting for LinuxTV.`
+          nextActiveSystem?.username.trim() && nextActiveSystem.password
+            ? 'Saved credentials loaded'
+            : 'No saved credentials',
+        lastMessage: nextActiveSystem
+          ? `Saved ${nextActiveSystem.ipAddress}:${nextActiveSystem.port}. Waiting for LinuxTV.`
           : 'Enter the LinuxTV info once to keep this remote paired.',
       });
 
-      if (nextHost) {
-        const repository = createRepository(false);
-        await repository.connect({
-          ipAddress: nextHost,
-          password: nextPassword,
-          port: nextPort,
-          username: nextUsername,
-        });
+      if (nextActiveSystem) {
+        if (nextActiveSystem.id !== storedActiveSystemId) {
+          await persistSystems(nextSystems, nextActiveSystem.id);
+        }
+        await connectToSystem(nextActiveSystem);
       }
     };
 
@@ -319,7 +582,16 @@ export default function RemoteScreen() {
       repositoryRef.current?.dispose();
       repositoryRef.current = null;
     };
+    // This hydrates saved state once on mount, including migration from legacy keys.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Update server apps when repository state changes
+  useEffect(() => {
+    if (repositoryState.appsList && repositoryState.appsList.length > 0) {
+      setServerApps(repositoryState.appsList);
+    }
+  }, [repositoryState.appsList]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
@@ -341,10 +613,12 @@ export default function RemoteScreen() {
   }, [hasSavedSetup, ipAddress, isHydrated, password, port, repositoryState.isDemoMode, username]);
 
   const showLoginScreen = !hasSavedSetup;
-  const tabItems: { key: TabType; label: string }[] = [
-    { key: 'remote', label: 'Remote' },
-    { key: 'keyboard', label: 'Keyboard' },
-    { key: 'touchpad', label: 'Touchpad' },
+  const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
+  const tabItems: { key: TabType; label: string; icon: ComponentProps<typeof Ionicons>['name'] }[] = [
+    { key: 'remote', label: 'Remote', icon: 'cellular' },
+    { key: 'apps', label: 'Apps', icon: 'grid' },
+    { key: 'keyboard', label: 'Keyboard', icon: 'text' },
+    { key: 'touchpad', label: 'Touchpad', icon: 'hand-left' },
   ];
 
   const touchpadResponder = useRef(
@@ -384,11 +658,13 @@ export default function RemoteScreen() {
 
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View>
+            <View style={styles.headerTextWrap}>
               <Text style={styles.title}>LinuxTV</Text>
-              {repositoryState.deviceName ? (
-                <Text style={styles.deviceName}>{repositoryState.deviceName}</Text>
-              ) : null}
+              <Text style={styles.deviceName}>
+                {repositoryState.isDemoMode
+                  ? 'Mock remote session'
+                  : activeSystem?.name || repositoryState.deviceName || 'No system selected'}
+              </Text>
             </View>
             <View
               style={[
@@ -414,10 +690,22 @@ export default function RemoteScreen() {
 
         {showLoginScreen ? (
           <View style={styles.loginContainer}>
-            <Text style={styles.helperText}>Enter LinuxTV connection details</Text>
-            <Text style={styles.helperSubtext}>
-              Google Play reviewers can use Demo Mode without a real LinuxTV server.
-            </Text>
+            <View style={styles.loginHeader}>
+              <Ionicons name="tv" size={64} color="#58a6ff" />
+              <Text style={styles.helperText}>Add your first LinuxTV system</Text>
+              <Text style={styles.helperSubtext}>
+                Save multiple systems here, then switch between them from the settings gear.
+              </Text>
+            </View>
+            <TextInput
+              value={systemName}
+              onChangeText={setSystemName}
+              placeholder="System name"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.input}
+            />
             <View style={styles.addressRow}>
               <TextInput
                 value={ipAddress}
@@ -461,8 +749,8 @@ export default function RemoteScreen() {
             />
             <Pressable
               style={[styles.actionButton, styles.primaryButton]}
-              onPress={saveSetupAndConnect}>
-              <Text style={styles.primaryButtonText}>Connect</Text>
+              onPress={saveSystemAndConnect}>
+              <Text style={styles.primaryButtonText}>Save & Connect</Text>
             </Pressable>
             <Pressable
               style={[styles.actionButton, styles.secondaryButton]}
@@ -482,188 +770,326 @@ export default function RemoteScreen() {
                 contentContainerStyle={styles.remoteScrollContent}
                 showsVerticalScrollIndicator={false}>
                 <View style={styles.remoteControl}>
+                  {/* Modern D-Pad */}
                   <View style={styles.dpadContainer}>
-                    <ControlButton
-                      label="▲"
-                      {...createRepeatingActionHandlers('UP')}
-                      style={styles.dpadButton}
-                      textStyle={styles.dpadButtonText}
-                    />
-                    <View style={styles.dpadMiddle}>
+                    <View style={styles.dpadCircle}>
+                      {/* Top Button */}
+                      <Pressable
+                        style={({ pressed }) => [styles.dpadButton, styles.dpadTop, pressed && styles.pressed]}
+                        onPressIn={() => {
+                          createRepeatingActionHandlers('UP').onPressIn();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        onPressOut={() => {
+                          createRepeatingActionHandlers('UP').onPressOut();
+                        }}
+                        onPress={() => sendAction('UP')}>
+                        <Ionicons name="caret-up" size={36} color="#f0f6fc" />
+                      </Pressable>
+                      
+                      {/* Left Button */}
+                      <Pressable
+                        style={({ pressed }) => [styles.dpadButton, styles.dpadLeft, pressed && styles.pressed]}
+                        onPressIn={() => {
+                          createRepeatingActionHandlers('LEFT').onPressIn();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        onPressOut={() => {
+                          createRepeatingActionHandlers('LEFT').onPressOut();
+                        }}
+                        onPress={() => sendAction('LEFT')}>
+                        <Ionicons name="caret-back" size={36} color="#f0f6fc" />
+                      </Pressable>
+                      
+                      {/* Center OK Button */}
+                      <Pressable
+                        style={({ pressed }) => [styles.okButton, pressed && styles.pressedOk]}
+                        onPress={() => {
+                          sendAction('SELECT');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        }}>
+                        <Text style={styles.okButtonText}>OK</Text>
+                      </Pressable>
+                      
+                      {/* Right Button */}
+                      <Pressable
+                        style={({ pressed }) => [styles.dpadButton, styles.dpadRight, pressed && styles.pressed]}
+                        onPressIn={() => {
+                          createRepeatingActionHandlers('RIGHT').onPressIn();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        onPressOut={() => {
+                          createRepeatingActionHandlers('RIGHT').onPressOut();
+                        }}
+                        onPress={() => sendAction('RIGHT')}>
+                        <Ionicons name="caret-forward" size={36} color="#f0f6fc" />
+                      </Pressable>
+                      
+                      {/* Bottom Button */}
+                      <Pressable
+                        style={({ pressed }) => [styles.dpadButton, styles.dpadBottom, pressed && styles.pressed]}
+                        onPressIn={() => {
+                          createRepeatingActionHandlers('DOWN').onPressIn();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        onPressOut={() => {
+                          createRepeatingActionHandlers('DOWN').onPressOut();
+                        }}
+                        onPress={() => sendAction('DOWN')}>
+                        <Ionicons name="caret-down" size={36} color="#f0f6fc" />
+                      </Pressable>
+                    </View>
+                  </View>
+
+                  {/* Navigation Buttons */}
+                  <View style={styles.buttonGroup}>
+                    <Text style={styles.groupLabel}>Navigation</Text>
+                    <View style={styles.actionButtonsRow}>
                       <ControlButton
-                        label="◀"
-                        {...createRepeatingActionHandlers('LEFT')}
-                        style={styles.dpadButton}
-                        textStyle={styles.dpadButtonText}
+                        icon="arrow-back"
+                        label="Back"
+                        onPress={() => {
+                          sendAction('BACK');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={styles.actionButtonSmall}
+                        textStyle={styles.actionButtonText}
                       />
                       <ControlButton
-                        label="OK"
-                        onPress={() => sendAction('SELECT')}
-                        style={styles.okButton}
-                        textStyle={styles.okButtonText}
+                        icon="home"
+                        label="Home"
+                        onPress={() => {
+                          sendAction('HOME');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={styles.actionButtonSmall}
+                        textStyle={styles.actionButtonText}
                       />
                       <ControlButton
-                        label="▶"
-                        {...createRepeatingActionHandlers('RIGHT')}
-                        style={styles.dpadButton}
-                        textStyle={styles.dpadButtonText}
+                        icon="menu"
+                        label="Menu"
+                        onPress={() => {
+                          sendAction('MENU');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={styles.actionButtonSmall}
+                        textStyle={styles.actionButtonText}
                       />
                     </View>
-                    <ControlButton
-                      label="▼"
-                      {...createRepeatingActionHandlers('DOWN')}
-                      style={styles.dpadButton}
-                      textStyle={styles.dpadButtonText}
-                    />
                   </View>
 
-                  <View style={styles.actionButtonsRow}>
-                    <ControlButton
-                      label="Back"
-                      onPress={() => sendAction('BACK')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                    <ControlButton
-                      label="Home"
-                      onPress={() => sendAction('HOME')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                    <ControlButton
-                      label="Menu"
-                      onPress={() => sendAction('MENU')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
+                  {/* Media Controls */}
+                  <View style={styles.buttonGroup}>
+                    <Text style={styles.groupLabel}>Media</Text>
+                    <View style={styles.actionButtonsRow}>
+                      <ControlButton
+                        icon="close"
+                        label="Close"
+                        onPress={() => {
+                          sendAction('CLOSE_APP');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={[styles.actionButtonSmall, styles.closeButtonSmall]}
+                        textStyle={styles.closeButtonTextSmall}
+                      />
+                      <ControlButton
+                        icon={repositoryState.lastAction === 'PLAY_PAUSE' ? "pause" : "play"}
+                        label="Play"
+                        onPress={() => {
+                          sendAction('PLAY_PAUSE');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        }}
+                        style={[styles.actionButtonSmall, styles.playButtonSmall]}
+                        textStyle={styles.playButtonTextSmall}
+                      />
+                      <ControlButton
+                        icon="information-circle"
+                        label="Info"
+                        onPress={() => {
+                          sendAction('INFO');
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }}
+                        style={styles.actionButtonSmall}
+                        textStyle={styles.actionButtonText}
+                      />
+                    </View>
                   </View>
 
-                  <View style={styles.actionButtonsRow}>
-                    <ControlButton
-                      label="Close"
-                      onPress={() => sendAction('CLOSE_APP')}
-                      style={[styles.actionButtonSmall, styles.closeButtonSmall]}
-                      textStyle={styles.closeButtonTextSmall}
-                    />
-                    <ControlButton
-                      label="Play/Pause"
-                      onPress={() => sendAction('PLAY_PAUSE')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                    <ControlButton
-                      label="Info"
-                      onPress={() => sendAction('INFO')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                  </View>
-
-                  <View style={styles.actionButtonsRow}>
-                    <ControlButton
-                      label="Vol -"
-                      onPress={() => sendAction('VOLUME_DOWN')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                    <ControlButton
-                      label="Mute"
-                      onPress={() => sendAction('MUTE')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
-                    <ControlButton
-                      label="Vol +"
-                      onPress={() => sendAction('VOLUME_UP')}
-                      style={styles.actionButtonSmall}
-                      textStyle={styles.actionButtonText}
-                    />
+                  {/* Volume Controls */}
+                  <View style={styles.buttonGroup}>
+                    <Text style={styles.groupLabel}>Volume</Text>
+                    <View style={styles.volumeContainer}>
+                      <View style={styles.volumeSliderRow}>
+                        <Ionicons name="volume-low" size={24} color="#8b949e" />
+                        <View style={styles.sliderContainer}>
+                          <View style={styles.sliderTrack}>
+                            <View style={[styles.sliderFill, { width: `${volumeLevel}%` }]} />
+                          </View>
+                          <View style={styles.sliderButtons}>
+                            <Pressable
+                              style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                              onPress={() => adjustVolume('down')}>
+                              <Ionicons name="remove" size={24} color="#f0f6fc" />
+                            </Pressable>
+                            <Pressable
+                              style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                              onPress={() => adjustVolume('up')}>
+                              <Ionicons name="add" size={24} color="#f0f6fc" />
+                            </Pressable>
+                          </View>
+                        </View>
+                        <Ionicons name="volume-high" size={24} color="#8b949e" />
+                      </View>
+                      <Pressable
+                        style={({ pressed }) => [styles.muteButtonFull, pressed && styles.pressed]}
+                        onPress={toggleMute}>
+                        <Ionicons 
+                          name={isMuted ? "volume-mute" : "volume-high"} 
+                          size={24} 
+                          color="#ffffff" 
+                        />
+                        <Text style={styles.muteButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+                      </Pressable>
+                    </View>
                   </View>
                 </View>
+              </ScrollView>
+            )}
 
-                <View style={styles.launcherSection}>
-                  <Text style={styles.launcherTitle}>Launcher</Text>
-                  <Text style={styles.launcherSubtitle}>
-                    {repositoryState.isDemoMode
-                      ? 'Mock apps are available for Play review and demo walkthroughs.'
-                      : 'Quick actions stay available while the LinuxTV session is connected.'}
-                  </Text>
-                  <View style={styles.launcherGrid}>
-                    {(demoApps.length ? demoApps : [{ id: 'live-home', name: 'LinuxTV Home', subtitle: 'Connected device' }]).map(
-                      (app) => (
-                        <Pressable
-                          key={app.id}
-                          style={({ pressed }) => [
-                            styles.launcherTile,
-                            pressed && styles.pressed,
-                          ]}
-                          onPress={() => sendAction(`OPEN_${app.name.toUpperCase().replaceAll(' ', '_')}`)}>
-                          <Text style={styles.launcherTileTitle}>{app.name}</Text>
-                          <Text style={styles.launcherTileSubtitle}>{app.subtitle}</Text>
-                        </Pressable>
-                      )
-                    )}
+            {activeTab === 'apps' && (
+              <ScrollView
+                style={styles.remoteScroll}
+                contentContainerStyle={styles.remoteScrollContent}
+                showsVerticalScrollIndicator={false}>
+                <View style={styles.appsContainer}>
+                  <View style={styles.appsHeader}>
+                    <Text style={styles.appsTitle}>Apps</Text>
+                    <Pressable
+                      style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                      onPress={fetchApps}>
+                      <Ionicons name="refresh" size={20} color="#58a6ff" />
+                    </Pressable>
                   </View>
+                  <Text style={styles.appsSubtitle}>Tap an app to launch it on LinuxTV</Text>
+                  
+                  <View style={styles.appsGrid}>
+                    {serverApps.map((app) => (
+                      <Pressable
+                        key={app.id}
+                        style={({ pressed }) => [styles.appCard, pressed && styles.pressed]}
+                        onPress={() => launchApp(app.id)}>
+                        <View style={styles.appIcon}>
+                          <Ionicons 
+                            name={(app.icon as any) || 'application'} 
+                            size={32} 
+                            color="#58a6ff" 
+                          />
+                        </View>
+                        <Text style={styles.appName}>{app.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  
+                  {serverApps.length === 0 && (
+                    <View style={styles.emptyApps}>
+                      <Ionicons name="apps" size={64} color="#8b949e" />
+                      <Text style={styles.emptyAppsText}>No apps found</Text>
+                      <Text style={styles.emptyAppsSubtext}>Tap refresh to load apps from server</Text>
+                    </View>
+                  )}
                 </View>
               </ScrollView>
             )}
 
             {activeTab === 'keyboard' && (
               <View style={styles.keyboardContainer}>
-                <TextInput
-                  value={keyboardDraft}
-                  onChangeText={setKeyboardDraft}
-                  placeholder="Type text..."
-                  placeholderTextColor="#8b949e"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  multiline
-                  style={styles.keyboardInput}
-                />
-                <Pressable
-                  style={[styles.actionButton, styles.primaryButton]}
-                  onPress={sendKeyboardText}>
-                  <Text style={styles.primaryButtonText}>Send Text</Text>
-                </Pressable>
-                <View style={styles.specialKeysRow}>
-                  <ControlButton
-                    label="Enter"
-                    onPress={() => sendSpecialKey('ENTER')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
+                <View style={styles.keyboardInputWrapper}>
+                  <TextInput
+                    value={keyboardDraft}
+                    onChangeText={setKeyboardDraft}
+                    placeholder="Type text..."
+                    placeholderTextColor="#8b949e"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline
+                    style={styles.keyboardInput}
                   />
-                  <ControlButton
-                    label="Space"
-                    onPress={() => sendSpecialKey('SPACE')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
-                  />
-                  <ControlButton
-                    label="Backspace"
-                    onPress={() => sendSpecialKey('BACKSPACE')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
-                  />
+                  <Pressable
+                    style={[styles.actionButton, styles.primaryButton, styles.sendButton]}
+                    onPress={() => {
+                      sendKeyboardText();
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    }}>
+                    <Ionicons name="paper-plane" size={20} color="#ffffff" />
+                    <Text style={styles.primaryButtonText}>Send</Text>
+                  </Pressable>
                 </View>
-                <View style={styles.specialKeysRow}>
-                  <ControlButton
-                    label="Esc"
-                    onPress={() => sendSpecialKey('ESCAPE')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
-                  />
-                  <ControlButton
-                    label="Tab"
-                    onPress={() => sendSpecialKey('TAB')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
-                  />
-                  <ControlButton
-                    label="Shift+Tab"
-                    onPress={() => sendAction('SHIFT_TAB')}
-                    style={styles.keyButton}
-                    textStyle={styles.keyButtonText}
-                  />
+                <View style={styles.keyboardSection}>
+                  <Text style={styles.groupLabel}>Quick Keys</Text>
+                  <View style={styles.specialKeysRow}>
+                    <ControlButton
+                      icon="checkmark-circle"
+                      label="Enter"
+                      onPress={() => {
+                        sendSpecialKey('ENTER');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                    <ControlButton
+                      icon="ellipse-outline"
+                      label="Space"
+                      onPress={() => {
+                        sendSpecialKey('SPACE');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                    <ControlButton
+                      icon="backspace-outline"
+                      label="Backspace"
+                      onPress={() => {
+                        sendSpecialKey('BACKSPACE');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                  </View>
+                  <View style={styles.specialKeysRow}>
+                    <ControlButton
+                      icon="close-circle"
+                      label="Esc"
+                      onPress={() => {
+                        sendSpecialKey('ESCAPE');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                    <ControlButton
+                      icon="arrow-forward"
+                      label="Tab"
+                      onPress={() => {
+                        sendSpecialKey('TAB');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                    <ControlButton
+                      icon="arrow-back"
+                      label="Shift+Tab"
+                      onPress={() => {
+                        sendAction('SHIFT_TAB');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}
+                      style={styles.keyButton}
+                      textStyle={styles.keyButtonText}
+                    />
+                  </View>
                 </View>
               </View>
             )}
@@ -671,19 +1097,28 @@ export default function RemoteScreen() {
             {activeTab === 'touchpad' && (
               <View style={styles.touchpadContainer}>
                 <View style={styles.touchpadSurface} {...touchpadResponder.panHandlers}>
-                  <Text style={styles.touchpadText}>Touchpad</Text>
-                  <Text style={styles.touchpadHint}>Tap to click • Drag to move</Text>
+                  <View style={styles.touchpadInner}>
+                    <Ionicons name="hand-left" size={48} color="#58a6ff" />
+                    <Text style={styles.touchpadText}>Touchpad</Text>
+                    <Text style={styles.touchpadHint}>Tap to click • Drag to move</Text>
+                  </View>
                 </View>
                 <View style={styles.touchpadButtons}>
                   <ControlButton
                     label="Click"
-                    onPress={() => sendPointerEvent('click')}
+                    onPress={() => {
+                      sendPointerEvent('click');
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    }}
                     style={styles.touchpadButton}
                     textStyle={styles.touchpadButtonText}
                   />
                   <ControlButton
                     label="Right Click"
-                    onPress={() => sendPointerEvent('right_click')}
+                    onPress={() => {
+                      sendPointerEvent('right_click');
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    }}
                     style={styles.touchpadButton}
                     textStyle={styles.touchpadButtonText}
                   />
@@ -692,8 +1127,10 @@ export default function RemoteScreen() {
             )}
           </View>
         )}
+      </View>
 
-        {!showLoginScreen && (
+      {!showLoginScreen && (
+        <View style={styles.tabBarContainer}>
           <View style={styles.tabBar}>
             {tabItems.map((tab) => (
               <Pressable
@@ -703,7 +1140,15 @@ export default function RemoteScreen() {
                   activeTab === tab.key && styles.tabItemActive,
                   pressed && styles.pressed,
                 ]}
-                onPress={() => setActiveTab(tab.key)}>
+                onPress={() => {
+                  setActiveTab(tab.key);
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}>
+                <Ionicons
+                  name={tab.icon}
+                  size={22}
+                  color={activeTab === tab.key ? '#238636' : '#8b949e'}
+                />
                 <Text
                   style={[
                     styles.tabItemText,
@@ -714,8 +1159,8 @@ export default function RemoteScreen() {
               </Pressable>
             ))}
           </View>
-        )}
-      </View>
+        </View>
+      )}
 
       <Modal
         transparent
@@ -723,7 +1168,59 @@ export default function RemoteScreen() {
         visible={isMenuVisible}
         onRequestClose={() => setIsMenuVisible(false)}>
         <Pressable style={styles.menuOverlay} onPress={() => setIsMenuVisible(false)}>
-          <View style={styles.menuSheet}>
+          <Pressable style={styles.menuSheet} onPress={() => undefined}>
+            {!repositoryState.isDemoMode ? (
+              <>
+                <View style={styles.menuSection}>
+                  <Text style={styles.menuSectionTitle}>Saved systems</Text>
+                  {savedSystems.map((system) => (
+                    <Pressable
+                      key={system.id}
+                      style={({ pressed }) => [
+                        styles.systemRow,
+                        system.id === activeSystemId && styles.systemRowActive,
+                        pressed && styles.menuItemPressed,
+                      ]}
+                      onPress={() => {
+                        void switchToSystem(system);
+                      }}>
+                      <View style={styles.systemRowText}>
+                        <Text style={styles.systemName}>{system.name}</Text>
+                        <Text style={styles.systemMeta}>
+                          {system.ipAddress}:{system.port}
+                        </Text>
+                      </View>
+                      {system.id === activeSystemId ? (
+                        <Text style={styles.systemBadge}>Live</Text>
+                      ) : (
+                        <Text style={styles.systemSwapLabel}>Switch</Text>
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Pressable
+                  style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+                  onPress={openAddSystemEditor}>
+                  <Text style={styles.menuItemText}>Add another system</Text>
+                </Pressable>
+                {activeSystem ? (
+                  <Pressable
+                    style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+                    onPress={openEditSystemEditor}>
+                    <Text style={styles.menuItemText}>Edit current system</Text>
+                  </Pressable>
+                ) : null}
+                {activeSystem ? (
+                  <Pressable
+                    style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+                    onPress={confirmRemoveActiveSystem}>
+                    <Text style={styles.menuItemDangerText}>Remove current system</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            ) : null}
+
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
               onPress={() => confirmPowerAction('SHUTDOWN')}>
@@ -737,11 +1234,98 @@ export default function RemoteScreen() {
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
               onPress={confirmLogout}>
-              <Text style={styles.menuItemText}>
-                {repositoryState.isDemoMode ? 'Exit Demo Mode' : 'Logout'}
+              <Text style={styles.menuItemDangerText}>
+                {repositoryState.isDemoMode ? 'Exit Demo Mode' : 'Remove All Saved Systems'}
               </Text>
             </Pressable>
-          </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isSystemEditorVisible}
+        onRequestClose={() => setIsSystemEditorVisible(false)}>
+        <Pressable
+          style={styles.editorOverlay}
+          onPress={() => {
+            setIsSystemEditorVisible(false);
+            resetEditorToActiveSystem();
+          }}>
+          <Pressable style={styles.editorSheet} onPress={() => undefined}>
+            <Text style={styles.editorTitle}>
+              {editingSystemId ? 'Edit system' : 'Add system'}
+            </Text>
+            <Text style={styles.editorSubtitle}>
+              Save another LinuxTV target and switch to it from the gear anytime.
+            </Text>
+            <TextInput
+              value={systemName}
+              onChangeText={setSystemName}
+              placeholder="System name"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <View style={styles.addressRow}>
+              <TextInput
+                value={ipAddress}
+                onChangeText={setIpAddress}
+                placeholder="IP address"
+                placeholderTextColor="#8b949e"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                style={[styles.input, styles.ipInput]}
+              />
+              <TextInput
+                value={port}
+                onChangeText={setPort}
+                placeholder="Port"
+                placeholderTextColor="#8b949e"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="number-pad"
+                style={[styles.input, styles.portInput]}
+              />
+            </View>
+            <TextInput
+              value={username}
+              onChangeText={setUsername}
+              placeholder="Username"
+              placeholderTextColor="#8b949e"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor="#8b949e"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.input}
+            />
+            <Pressable
+              style={[styles.actionButton, styles.primaryButton]}
+              onPress={saveSystemAndConnect}>
+              <Text style={styles.primaryButtonText}>
+                {editingSystemId ? 'Save & Switch' : 'Add & Switch'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionButton, styles.ghostButton]}
+              onPress={() => {
+                setIsSystemEditorVisible(false);
+                resetEditorToActiveSystem();
+              }}>
+              <Text style={styles.ghostButtonText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
         </Pressable>
       </Modal>
     </SafeAreaView>
@@ -750,18 +1334,22 @@ export default function RemoteScreen() {
 
 function ControlButton({
   label,
+  icon,
   onPress,
   onPressIn,
   onPressOut,
   style,
   textStyle,
+  iconSize = 20,
 }: {
   label: string;
+  icon?: ComponentProps<typeof Ionicons>['name'];
   onPress: () => void;
   onPressIn?: () => void;
   onPressOut?: () => void;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
+  iconSize?: number;
 }) {
   return (
     <Pressable
@@ -769,6 +1357,7 @@ function ControlButton({
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}>
+      {icon && <Ionicons name={icon} size={iconSize} color="#c9d1d9" style={styles.buttonIcon} />}
       <Text style={textStyle}>{label}</Text>
     </Pressable>
   );
@@ -781,9 +1370,10 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
     paddingTop: 16,
     paddingBottom: 0,
+    backgroundColor: '#0a0e17',
   },
   demoBanner: {
     alignSelf: 'flex-start',
@@ -804,7 +1394,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#21262d',
+    gap: 16,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -812,10 +1406,14 @@ const styles = StyleSheet.create({
     gap: 12,
     flex: 1,
   },
+  headerTextWrap: {
+    flex: 1,
+  },
   title: {
     color: '#f0f6fc',
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '800',
+    letterSpacing: -0.5,
   },
   deviceName: {
     color: '#8b949e',
@@ -823,15 +1421,25 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#0a0e17',
   },
   statusOnline: {
     backgroundColor: '#238636',
+    shadowColor: '#238636',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
   },
   statusOffline: {
     backgroundColor: '#da3633',
+    shadowColor: '#da3633',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
   },
   menuButton: {
     width: 42,
@@ -856,10 +1464,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 14,
   },
+  loginHeader: {
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
   helperText: {
-    color: '#8b949e',
-    fontSize: 14,
-    lineHeight: 20,
+    color: '#f0f6fc',
+    fontSize: 20,
+    fontWeight: '700',
     textAlign: 'center',
   },
   helperSubtext: {
@@ -877,37 +1490,147 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   remoteScrollContent: {
-    gap: 18,
+    gap: 20,
     paddingBottom: 24,
+    paddingTop: 8,
   },
   statusMessage: {
     color: '#8b949e',
     fontSize: 13,
     textAlign: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#161b22',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#21262d',
   },
   remoteControl: {
     gap: 18,
   },
-  dpadContainer: {
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 22,
+  appsContainer: {
+    gap: 16,
   },
-  dpadMiddle: {
+  appsHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 24,
+    marginBottom: 4,
   },
-  dpadButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  appsTitle: {
+    color: '#f0f6fc',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  refreshButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#30363d',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  appsSubtitle: {
+    color: '#8b949e',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  appsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  appCard: {
+    width: 'calc(50% - 6px)',
+    backgroundColor: '#161b22',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    padding: 20,
+    alignItems: 'center',
+    gap: 12,
+  },
+  appIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+    backgroundColor: '#21262d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appName: {
+    color: '#f0f6fc',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  emptyApps: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 12,
+  },
+  emptyAppsText: {
+    color: '#8b949e',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  emptyAppsSubtext: {
+    color: '#8b949e',
+    fontSize: 13,
+  },
+  dpadContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  dpadCircle: {
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: '#161b22',
+    borderWidth: 2,
+    borderColor: '#30363d',
+    position: 'relative',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dpadButton: {
+    position: 'absolute',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  dpadTop: {
+    top: 12,
+    left: 88,
+  },
+  dpadBottom: {
+    bottom: 12,
+    left: 88,
+  },
+  dpadLeft: {
+    left: 12,
+    top: 88,
+  },
+  dpadRight: {
+    right: 12,
+    top: 88,
   },
   dpadButtonText: {
     color: '#f0f6fc',
@@ -915,35 +1638,146 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   okButton: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    position: 'absolute',
+    top: 85,
+    left: 85,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     backgroundColor: '#238636',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#238636',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+    borderWidth: 2,
+    borderColor: '#2ea043',
   },
   okButtonText: {
     color: '#ffffff',
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  pressedOk: {
+    transform: [{ scale: 0.95 }],
+    opacity: 0.9,
+  },
+  buttonGroup: {
+    gap: 10,
+    marginBottom: 16,
+  },
+  groupLabel: {
+    color: '#8b949e',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingLeft: 4,
   },
   actionButtonsRow: {
     flexDirection: 'row',
     gap: 10,
   },
-  actionButtonSmall: {
+  volumeRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  volumeContainer: {
+    gap: 12,
+  },
+  volumeSliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  sliderContainer: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: 12,
+    gap: 8,
+  },
+  sliderTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    overflow: 'hidden',
+  },
+  sliderFill: {
+    height: '100%',
+    backgroundColor: '#238636',
+    borderRadius: 3,
+  },
+  sliderButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  sliderButton: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#30363d',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  volumeButton: {
+    flex: 1,
+    minHeight: 64,
+    borderRadius: 16,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  muteButton: {
+    backgroundColor: '#1f6feb',
+    borderColor: '#1f6feb',
+    flex: 1.2,
+  },
+  muteButtonFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#1f6feb',
+    borderWidth: 1,
+    borderColor: '#1f6feb',
+  },
+  muteButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  playButtonSmall: {
+    backgroundColor: '#238636',
+    borderColor: '#238636',
+  },
+  playButtonTextSmall: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  actionButtonSmall: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 14,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
   actionButtonText: {
     color: '#c9d1d9',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '600',
   },
   closeButtonSmall: {
@@ -954,100 +1788,83 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '700',
   },
-  launcherSection: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#30363d',
-    backgroundColor: '#11161f',
-    padding: 16,
-    gap: 12,
-  },
-  launcherTitle: {
-    color: '#f0f6fc',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  launcherSubtitle: {
-    color: '#8b949e',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  launcherGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  launcherTile: {
-    width: '48%',
-    minHeight: 86,
-    borderRadius: 14,
-    backgroundColor: '#1b2330',
-    borderWidth: 1,
-    borderColor: '#2d3748',
-    padding: 14,
-    justifyContent: 'space-between',
-  },
-  launcherTileTitle: {
-    color: '#f0f6fc',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  launcherTileSubtitle: {
-    color: '#8b949e',
-    fontSize: 12,
+  buttonIcon: {
+    marginBottom: 2,
   },
   keyboardContainer: {
     flex: 1,
+    gap: 16,
+  },
+  keyboardInputWrapper: {
+    gap: 12,
+  },
+  keyboardSection: {
     gap: 12,
   },
   keyboardInput: {
-    flex: 1,
-    borderRadius: 12,
+    minHeight: 140,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#30363d',
     backgroundColor: '#0d1117',
     color: '#c9d1d9',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     fontSize: 15,
     textAlignVertical: 'top',
   },
-  specialKeysRow: {
+  sendButton: {
     flexDirection: 'row',
     gap: 8,
+    paddingHorizontal: 20,
+  },
+  specialKeysRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   keyButton: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 10,
+    minHeight: 54,
+    borderRadius: 12,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#30363d',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   keyButtonText: {
     color: '#c9d1d9',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   touchpadContainer: {
     flex: 1,
     gap: 12,
+    marginBottom: 12,
   },
   touchpadSurface: {
     flex: 1,
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: 20,
+    borderWidth: 2,
     borderColor: '#30363d',
     backgroundColor: '#0d1117',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  touchpadInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   touchpadText: {
     color: '#f0f6fc',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
   },
   touchpadHint: {
@@ -1056,48 +1873,60 @@ const styles = StyleSheet.create({
   },
   touchpadButtons: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
   },
   touchpadButton: {
     flex: 1,
-    minHeight: 50,
-    borderRadius: 12,
+    minHeight: 56,
+    borderRadius: 14,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#30363d',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   touchpadButtonText: {
     color: '#c9d1d9',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
+  },
+  tabBarContainer: {
+    width: '100%',
+    backgroundColor: '#161b22',
   },
   tabBar: {
     flexDirection: 'row',
     borderTopWidth: 1,
     borderTopColor: '#30363d',
     backgroundColor: '#161b22',
-    marginTop: 12,
+    paddingBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 8,
   },
   tabItem: {
     flex: 1,
-    paddingVertical: 14,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   tabItemActive: {
-    borderTopWidth: 2,
+    borderTopWidth: 3,
     borderTopColor: '#238636',
     backgroundColor: '#0d1117',
   },
   tabItemText: {
     color: '#8b949e',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
   tabItemTextActive: {
     color: '#238636',
+    fontWeight: '700',
   },
   addressRow: {
     flexDirection: 'row',
@@ -1143,9 +1972,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  ghostButton: {
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  ghostButtonText: {
+    color: '#c9d1d9',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   pressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.97 }],
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
   },
   menuOverlay: {
     flex: 1,
@@ -1156,12 +1995,67 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   menuSheet: {
-    minWidth: 150,
-    borderRadius: 12,
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 16,
     backgroundColor: '#161b22',
     borderWidth: 1,
     borderColor: '#30363d',
     overflow: 'hidden',
+  },
+  menuSection: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#21262d',
+  },
+  menuSectionTitle: {
+    color: '#8b949e',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  systemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#30363d',
+    backgroundColor: '#0d1117',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  systemRowActive: {
+    borderColor: '#238636',
+    backgroundColor: '#132218',
+  },
+  systemRowText: {
+    flex: 1,
+    gap: 2,
+  },
+  systemName: {
+    color: '#f0f6fc',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  systemMeta: {
+    color: '#8b949e',
+    fontSize: 12,
+  },
+  systemBadge: {
+    color: '#7ee787',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  systemSwapLabel: {
+    color: '#58a6ff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   menuItem: {
     paddingHorizontal: 18,
@@ -1174,5 +2068,39 @@ const styles = StyleSheet.create({
     color: '#58a6ff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  menuItemDangerText: {
+    color: '#ff7b72',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  editorOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(10, 14, 23, 0.72)',
+  },
+  editorSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#161b22',
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#30363d',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 32,
+    gap: 12,
+  },
+  editorTitle: {
+    color: '#f0f6fc',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  editorSubtitle: {
+    color: '#8b949e',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 4,
   },
 });

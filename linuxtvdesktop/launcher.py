@@ -944,7 +944,26 @@ class WebSocketControlServer(threading.Thread):
                         await websocket.send(json.dumps({"status": "error", "error": "invalid pointer event"}))
                     continue
 
-                action = str(payload.get("action", "")).upper()
+                # Handle app listing request
+                if message_type == "get_apps" or str(payload.get("action", "")).upper() == "GET_APPS":
+                    apps_list = self.window.get_installed_apps()
+                    await websocket.send(json.dumps({
+                        "status": "ok",
+                        "type": "apps_list",
+                        "apps": apps_list
+                    }))
+                    continue
+
+                # Handle app launch request
+                action = str(payload.get("action", ""))
+                if action.startswith("LAUNCH_APP:"):
+                    app_id = action.replace("LAUNCH_APP:", "")
+                    logging.info("Launching app from remote: %s", app_id)
+                    self.window.launch_app_by_id(app_id)
+                    await websocket.send(json.dumps({"status": "ok", "action": "launch_app", "app_id": app_id}))
+                    continue
+
+                action = action.upper()
                 if action:
                     self.window.queue_remote_action(action)
                     await websocket.send(json.dumps({"status": "ok", "action": action}))
@@ -2062,6 +2081,53 @@ class LauncherWindow(QMainWindow):
         if web_entries:
             categories.append(("Web Apps", web_entries))
         return categories
+
+    def get_installed_apps(self):
+        """Get list of installed apps for remote control app listing"""
+        apps_list = []
+        categories = self.get_categorized_entries()
+        
+        for category_name, entries in categories:
+            for entry in entries:
+                item = entry["item"]
+                app_id = item.get("id", item.get("name", "")).lower().replace(" ", "_")
+                app_name = item.get("name", "Unknown")
+                
+                # Determine icon based on app type
+                icon_name = "application"
+                if entry["kind"] == "web":
+                    icon_name = "globe"
+                
+                apps_list.append({
+                    "id": app_id,
+                    "name": app_name,
+                    "kind": entry["kind"],
+                    "icon": icon_name,
+                    "category": category_name
+                })
+        
+        return apps_list
+
+    def launch_app_by_id(self, app_id):
+        """Launch an app by its ID from remote control"""
+        categories = self.get_categorized_entries()
+        
+        for category_name, entries in categories:
+            for entry in entries:
+                item = entry["item"]
+                item_id = item.get("id", item.get("name", "")).lower().replace(" ", "_")
+                
+                if item_id == app_id:
+                    logging.info("Launching app: %s (%s)", app_id, entry["kind"])
+                    
+                    if entry["kind"] == "native":
+                        self.launch_native_app(item)
+                    elif entry["kind"] == "web":
+                        self.launch_web_app(item)
+                    
+                    return
+        
+        logging.warning("App not found: %s", app_id)
 
     def get_launchable_entries(self):
         entries = []

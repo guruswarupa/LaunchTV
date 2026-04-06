@@ -27,6 +27,7 @@ export type RepositoryState = {
   lastAction: string;
   lastMessage: string;
   status: ConnectionState;
+  appsList?: Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>;
 };
 
 export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click';
@@ -366,6 +367,7 @@ export class RealServerRepository implements RemoteRepository {
     try {
       const payload = JSON.parse(rawMessage) as {
         action?: string;
+        apps?: Array<{id: string; name: string; icon?: string}>;
         error?: string;
         event?: string;
         key?: string;
@@ -420,6 +422,14 @@ export class RealServerRepository implements RemoteRepository {
         this.emit({
           authStatus: 'Authenticated',
         });
+
+        // Handle apps list response
+        if (payload.type === 'apps_list' && payload.apps) {
+          this.emit({
+            appsList: payload.apps as Array<{id: string; name: string; icon?: string}>,
+          });
+          return;
+        }
 
         if (payload.type === 'pointer') {
           if (payload.event === 'tap') {
