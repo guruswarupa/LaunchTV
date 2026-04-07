@@ -59,8 +59,9 @@ When you choose `Install LinuxTV`, the installer is preseeded to create:
 
 ## Notes
 
-- Stremio is installed during the chroot hook from its official Debian package URL.
-- The Stremio version is defined near the top of `config/hooks/live/0100-setup-linuxtv.hook.chroot`.
+- Stremio is installed from Flathub as `com.stremio.Stremio`.
+- Brave Browser is installed from Brave's official Debian repository.
 - Build on a Debian or Ubuntu host system, or inside a Debian-based container or VM.
 - The `--debian-installer live` live-build option keeps the resulting image installable from the live environment.
 - LinuxTV's required Python runtime dependencies are baked into the image as Debian packages, and the runtime virtualenv lives under `/opt/linuxtv/.venv` so it survives installed-system boots.
+- The installer runs a post-install provisioning step on the target disk so Brave Browser and Flatpak Stremio are installed on the final system too.

@@ -3,22 +3,26 @@ set -e
 
 INSTALL_DIR="/opt/linuxtv"
 LINUXTV_USER="linuxtv"
-STREMIO_VERSION="4.4.168"
-STREMIO_DEB_URL="https://dl.strem.io/shell-linux/v${STREMIO_VERSION}/stremio_${STREMIO_VERSION}-1_amd64.deb"
 
 useradd -m -s /bin/bash -G video,audio,input,plugdev "$LINUXTV_USER"
 echo "${LINUXTV_USER}:linuxtvbyguru" | chpasswd
 
 VENV_DIR="/opt/linuxtv/.venv"
 
-apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev
+apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev flatpak ca-certificates gnupg
 python3 -m venv --system-site-packages "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
-wget -q "$STREMIO_DEB_URL" -O /tmp/stremio.deb || true
-dpkg -i /tmp/stremio.deb || apt-get install -f -y
-rm -f /tmp/stremio.deb
 
-curl -fsS https://dl.brave.com/install.sh | sh
+install -d -m 0755 /etc/apt/keyrings
+curl -fsSLo /etc/apt/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+cat > /etc/apt/sources.list.d/brave-browser-release.list <<'EOF'
+deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main
+EOF
+apt-get update
+apt-get install -y brave-browser
+
+flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install -y --system flathub com.stremio.Stremio
 
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$INSTALL_DIR"
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$VENV_DIR"

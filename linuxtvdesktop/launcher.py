@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -137,7 +138,7 @@ REMOTE_POINTER_TARGET_CACHE_SECONDS = 1.0
 DEFAULT_CONFIG = {
     "native_apps": [
         {"name": "Kodi", "cmd": "kodi", "icon": "icons/kodi.png"},
-        {"name": "Stremio", "cmd": "stremio", "icon": "icons/stremio.png"},
+        {"name": "Stremio", "cmd": "flatpak run com.stremio.Stremio", "icon": "icons/stremio.png"},
         {"name": "VLC", "cmd": "vlc", "icon": "icons/vlc.png"},
     ],
     "web_apps": [
@@ -157,6 +158,198 @@ DEFAULT_CONFIG = {
 LINE_COUNT = 4
 COLUMN_COUNT = 3
 AUTO_LAUNCH_IDLE_MS = 10_000
+UPDATE_REPO_URL = "https://github.com/guruswarupa/LinuxTV"
+
+
+def dialog_metrics():
+    screen = QApplication.primaryScreen()
+    geometry = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
+    width = geometry.width()
+    height = geometry.height()
+    compact = width <= 1600 or height <= 950
+    if compact:
+        return {
+            "compact": True,
+            "add_width": 460,
+            "confirm_width": 420,
+            "settings_width": 560,
+            "settings_height": 610,
+            "dialog_margin_x": 22,
+            "dialog_margin_y": 20,
+            "dialog_spacing": 12,
+            "title_font": 20,
+            "section_font": 16,
+            "subtitle_font": 12,
+            "helper_font": 11,
+            "input_min_height": 40,
+            "nav_spacing": 8,
+            "status_padding_v": 10,
+            "status_padding_h": 12,
+            "field_font_css": 13,
+            "button_font_css": 13,
+            "button_min_width": 96,
+            "button_padding_v": 11,
+            "button_padding_h": 16,
+        }
+    return {
+        "compact": False,
+        "add_width": 560,
+        "confirm_width": 500,
+        "settings_width": 640,
+        "settings_height": 700,
+        "dialog_margin_x": 28,
+        "dialog_margin_y": 24,
+        "dialog_spacing": 14,
+        "title_font": 24,
+        "section_font": 18,
+        "subtitle_font": 14,
+        "helper_font": 13,
+        "input_min_height": 44,
+        "nav_spacing": 10,
+        "status_padding_v": 12,
+        "status_padding_h": 14,
+        "field_font_css": 15,
+        "button_font_css": 15,
+        "button_min_width": 110,
+        "button_padding_v": 13,
+        "button_padding_h": 20,
+    }
+
+
+def dialog_stylesheet(metrics=None):
+    metrics = metrics or dialog_metrics()
+    stylesheet = """
+        QDialog {
+            background-color: #111418;
+            border: 1px solid #2a3139;
+            border-radius: 22px;
+        }
+        QLabel#dialogTitle {
+            color: #f7f9fb;
+        }
+        QLabel#dialogSection {
+            color: #eef2f7;
+            padding-top: 10px;
+            font-weight: 700;
+        }
+        QLabel#dialogSubtitle {
+            color: #9aa7b4;
+        }
+        QLabel#dialogFieldLabel {
+            color: #dbe3ec;
+            font-weight: 600;
+            padding-top: 6px;
+        }
+        QLabel#dialogHelper {
+            color: #7e8b97;
+            padding-top: 4px;
+        }
+        QLabel#dialogStatus {
+            color: #b7c4d1;
+            background-color: #171d24;
+            border: 1px solid #29323c;
+            border-radius: 12px;
+            padding: __STATUS_PADDING_V__px __STATUS_PADDING_H__px;
+        }
+        QLineEdit, QComboBox {
+            background-color: #0b0f13;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            border-radius: 14px;
+            padding: __BUTTON_PADDING_V__px 16px;
+            min-height: 24px;
+            font-size: __FIELD_FONT__px;
+        }
+        QLineEdit:focus, QComboBox:focus {
+            border: 1px solid #33c3a0;
+        }
+        QComboBox::drop-down {
+            border: none;
+            width: 28px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #141a21;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+            alternate-background-color: #10161d;
+        }
+        QComboBox QAbstractItemView::item {
+            background-color: #141a21;
+            color: #edf2f7;
+            padding: 8px 10px;
+        }
+        QComboBox QAbstractItemView::item:selected {
+            background-color: #33c3a0;
+            color: #09110f;
+        }
+        QComboBox QAbstractItemView::item:hover {
+            background-color: #1d2731;
+            color: #edf2f7;
+        }
+        QComboBox QLineEdit {
+            background-color: #0b0f13;
+            color: #edf2f7;
+            border: none;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+        }
+        QPushButton[tileVariant="dialogSecondary"] {
+            background-color: #1a222b;
+            color: #d9e2ec;
+            border: 1px solid #32404d;
+            border-radius: 14px;
+            padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
+            min-width: __BUTTON_MIN_WIDTH__px;
+            font-size: __BUTTON_FONT__px;
+            font-weight: 500;
+        }
+        QPushButton[tileVariant="dialogSecondary"]:hover {
+            background-color: #212c37;
+            border: 1px solid #4a5d6f;
+        }
+        QPushButton[tileVariant="accent"] {
+            background-color: #33c3a0;
+            color: #08130f;
+            border: 1px solid #6be2c5;
+            border-radius: 14px;
+            padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
+            min-width: __BUTTON_MIN_WIDTH__px;
+            font-size: __BUTTON_FONT__px;
+            font-weight: 700;
+        }
+        QPushButton[tileVariant="accent"]:hover {
+            background-color: #4bd3b2;
+            border: 1px solid #8bead1;
+        }
+        QPushButton[tileVariant="danger"] {
+            background-color: #d74f62;
+            color: #ffffff;
+            border: 1px solid #f18493;
+            border-radius: 14px;
+            padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
+            min-width: __BUTTON_MIN_WIDTH__px;
+            font-size: __BUTTON_FONT__px;
+            font-weight: 700;
+        }
+        QPushButton[tileVariant="danger"]:hover {
+            background-color: #e06375;
+            border: 1px solid #f5a0ac;
+        }
+    """
+    replacements = {
+        "__STATUS_PADDING_V__": str(metrics["status_padding_v"]),
+        "__STATUS_PADDING_H__": str(metrics["status_padding_h"]),
+        "__BUTTON_PADDING_V__": str(metrics["button_padding_v"]),
+        "__BUTTON_PADDING_H__": str(metrics["button_padding_h"]),
+        "__FIELD_FONT__": str(metrics["field_font_css"]),
+        "__BUTTON_FONT__": str(metrics["button_font_css"]),
+        "__BUTTON_MIN_WIDTH__": str(metrics["button_min_width"]),
+    }
+    for token, value in replacements.items():
+        stylesheet = stylesheet.replace(token, value)
+    return stylesheet
 
 
 def resource_path(relpath: str) -> Path:
@@ -1068,13 +1261,18 @@ class TileButton(QPushButton):
     SHELL_PADDING_X = 14
     SHELL_PADDING_Y = 14
 
-    def __init__(self, name: str, icon_path: str, tooltip: str = "", variant: str = "default", subtitle: str = ""):
+    def __init__(self, name: str, icon_path: str, tooltip: str = "", variant: str = "default", subtitle: str = "", metrics=None):
         button_text = name if not subtitle else f"{name}\n{subtitle}"
         super().__init__(button_text)
+        metrics = metrics or {}
         self.variant = variant
         self.title = name
         self.subtitle = subtitle
-        self.base_size = QSize(400, 230)
+        tile_width = int(metrics.get("tile_width", 400))
+        tile_height = int(metrics.get("tile_height", 230))
+        tile_font = int(metrics.get("tile_font_size", 19))
+        tile_icon = int(metrics.get("tile_icon_size", 130))
+        self.base_size = QSize(tile_width, tile_height)
         self.shell_size = QSize(
             self.base_size.width() + (self.SHELL_PADDING_X * 2),
             self.base_size.height() + (self.SHELL_PADDING_Y * 2),
@@ -1098,8 +1296,8 @@ class TileButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setMinimumSize(self.base_size)
         self.setMaximumSize(self.shell_size)
-        self.setFont(QFont("Sans Serif", 19, QFont.Bold))
-        self.setIconSize(QSize(130, 130))
+        self.setFont(QFont("Sans Serif", tile_font, QFont.Bold))
+        self.setIconSize(QSize(tile_icon, tile_icon))
         self.set_tile_icon(icon_path)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
@@ -1151,8 +1349,10 @@ class TileButton(QPushButton):
 
 
 class AppCard(QWidget):
-    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, show_actions: bool = True):
+    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, show_actions: bool = True, metrics=None):
         super().__init__()
+        metrics = metrics or {}
+        action_button_size = int(metrics.get("action_button_size", 44))
         self.setObjectName("appCardShell")
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(tile_button.shell_size)
@@ -1171,7 +1371,7 @@ class AppCard(QWidget):
             self.edit_button.clicked.connect(edit_callback)
             self.edit_button.setCursor(Qt.PointingHandCursor)
             self.edit_button.setFocusPolicy(Qt.NoFocus)
-            self.edit_button.setFixedSize(44, 44)
+            self.edit_button.setFixedSize(action_button_size, action_button_size)
 
             self.delete_button = QToolButton(self)
             self.delete_button.setObjectName("deleteButton")
@@ -1180,7 +1380,7 @@ class AppCard(QWidget):
             self.delete_button.clicked.connect(delete_callback)
             self.delete_button.setCursor(Qt.PointingHandCursor)
             self.delete_button.setFocusPolicy(Qt.NoFocus)
-            self.delete_button.setFixedSize(44, 44)
+            self.delete_button.setFixedSize(action_button_size, action_button_size)
 
     def sizeHint(self):
         return self.tile_button.shell_size
@@ -1204,23 +1404,24 @@ class IconUpdateBridge(QObject):
 class AddItemDialog(QDialog):
     def __init__(self, parent=None, title_text="Add To Apps", type_text="Application", name_text="", value_text="", allow_type_change=True):
         super().__init__(parent)
+        metrics = dialog_metrics()
         self.setWindowTitle(title_text)
         self.setModal(True)
-        self.setFixedWidth(560)
+        self.setFixedWidth(metrics["add_width"])
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(metrics["dialog_margin_x"], metrics["dialog_margin_y"], metrics["dialog_margin_x"], metrics["dialog_margin_y"])
+        layout.setSpacing(metrics["dialog_spacing"])
 
         title = QLabel(title_text)
         title.setObjectName("dialogTitle")
-        title.setFont(QFont("Sans Serif", 24, QFont.Bold))
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
 
         subtitle = QLabel("Create a launcher for an installed app command or a website.")
         subtitle.setObjectName("dialogSubtitle")
         subtitle.setWordWrap(True)
-        subtitle.setFont(QFont("Sans Serif", 14))
+        subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
         layout.addWidget(subtitle)
 
         type_label = QLabel("Type")
@@ -1228,6 +1429,7 @@ class AddItemDialog(QDialog):
         layout.addWidget(type_label)
 
         self.type_select = QComboBox()
+        self.type_select.setMinimumHeight(metrics["input_min_height"])
         self.type_select.addItems(["Application", "Website"])
         layout.addWidget(self.type_select)
 
@@ -1236,6 +1438,7 @@ class AddItemDialog(QDialog):
         layout.addWidget(name_label)
 
         self.name_input = QLineEdit()
+        self.name_input.setMinimumHeight(metrics["input_min_height"])
         self.name_input.setPlaceholderText("Spotify, YouTube, Kodi...")
         layout.addWidget(self.name_input)
 
@@ -1244,6 +1447,7 @@ class AddItemDialog(QDialog):
         layout.addWidget(self.value_label)
 
         self.value_input = QLineEdit()
+        self.value_input.setMinimumHeight(metrics["input_min_height"])
         self.value_input.setPlaceholderText("flatpak run com.spotify.Client")
         layout.addWidget(self.value_input)
 
@@ -1273,91 +1477,7 @@ class AddItemDialog(QDialog):
         self.value_input.setText(value_text)
         self.update_mode(self.type_select.currentText())
 
-        self.setStyleSheet(
-            """
-            QDialog {
-                background-color: #1a1a1a;
-                border: 2px solid #333333;
-                border-radius: 16px;
-            }
-            QLabel#dialogTitle {
-                color: #ffffff;
-            }
-            QLabel#dialogSubtitle {
-                color: #bdbdbd;
-            }
-            QLabel#dialogFieldLabel {
-                color: #e0e0e0;
-                font-weight: 600;
-                padding-top: 6px;
-            }
-            QLabel#dialogHelper {
-                color: #9e9e9e;
-                padding-top: 4px;
-            }
-            QLineEdit, QComboBox {
-                background-color: #0d0d0d;
-                color: #e8e8e8;
-                border: 2px solid #333333;
-                border-radius: 12px;
-                padding: 14px 18px;
-                min-height: 24px;
-                font-size: 15px;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border: 2px solid #e53935;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 28px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1a1a1a;
-                color: #e8e8e8;
-                border: 2px solid #333333;
-                selection-background-color: #e53935;
-                selection-color: #ffffff;
-            }
-            QPushButton[tileVariant="dialogSecondary"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #e0e0e0;
-                border: 2px solid #444444;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 500;
-            }
-            QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3a3a3a, stop:1 #2a2a2a);
-                border: 2px solid #e53935;
-            }
-            QPushButton[tileVariant="dialogSecondary"]:focus {
-                border: 2px solid #ff5252;
-            }
-            QPushButton[tileVariant="accent"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                color: #ffffff;
-                border: 2px solid #ff5252;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QPushButton[tileVariant="accent"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5252, stop:1 #e53935);
-                border: 2px solid #ff867f;
-            }
-            QPushButton[tileVariant="accent"]:focus {
-                border: 2px solid #ffffff;
-            }
-            """
-        )
+        self.setStyleSheet(dialog_stylesheet(metrics))
 
     def update_mode(self, mode_text: str):
         if mode_text == "Website":
@@ -1380,23 +1500,24 @@ class AddItemDialog(QDialog):
 class ConfirmDialog(QDialog):
     def __init__(self, parent=None, title_text="Confirm Delete", body_text="Delete this app?"):
         super().__init__(parent)
+        metrics = dialog_metrics()
         self.setWindowTitle(title_text)
         self.setModal(True)
-        self.setFixedWidth(500)
+        self.setFixedWidth(metrics["confirm_width"])
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(metrics["dialog_margin_x"], metrics["dialog_margin_y"], metrics["dialog_margin_x"], metrics["dialog_margin_y"])
+        layout.setSpacing(metrics["dialog_spacing"])
 
         title = QLabel(title_text)
         title.setObjectName("dialogTitle")
-        title.setFont(QFont("Sans Serif", 24, QFont.Bold))
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
 
         body = QLabel(body_text)
         body.setObjectName("dialogSubtitle")
         body.setWordWrap(True)
-        body.setFont(QFont("Sans Serif", 14))
+        body.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
         layout.addWidget(body)
 
         button_row = QHBoxLayout()
@@ -1414,87 +1535,93 @@ class ConfirmDialog(QDialog):
 
         layout.addLayout(button_row)
 
-        self.setStyleSheet(
-            """
-            QDialog {
-                background-color: #1a1a1a;
-                border: 2px solid #333333;
-                border-radius: 16px;
-            }
-            QLabel#dialogTitle {
-                color: #ffffff;
-            }
-            QLabel#dialogSubtitle {
-                color: #bdbdbd;
-            }
-            QPushButton[tileVariant="dialogSecondary"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #e0e0e0;
-                border: 2px solid #444444;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 500;
-            }
-            QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3a3a3a, stop:1 #2a2a2a);
-                border: 2px solid #e53935;
-            }
-            QPushButton[tileVariant="danger"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                color: #ffffff;
-                border: 2px solid #ff5252;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QPushButton[tileVariant="danger"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5252, stop:1 #e53935);
-                border: 2px solid #ff867f;
-            }
-            """
-        )
+        self.setStyleSheet(dialog_stylesheet(metrics))
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, username_text="", auto_launch=None, app_options=None, parent=None):
+    wifi_scan_finished = Signal(object, str, str)
+
+    def __init__(
+        self,
+        username_text="",
+        auto_launch=None,
+        app_options=None,
+        wifi_networks=None,
+        current_wifi="",
+        wifi_refresh_callback=None,
+        wifi_connect_callback=None,
+        update_callback=None,
+        parent=None,
+    ):
         super().__init__(parent)
+        metrics = dialog_metrics()
         self.setWindowTitle("LinuxTV Settings")
         self.setModal(True)
-        self.setFixedWidth(560)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
 
         auto_launch = auto_launch or {}
         app_options = app_options or []
+        wifi_networks = wifi_networks or []
+        self.wifi_refresh_callback = wifi_refresh_callback
+        self.wifi_connect_callback = wifi_connect_callback
+        self.update_callback = update_callback
+        self._wifi_scan_in_progress = False
+        self._wifi_has_loaded = bool(wifi_networks or current_wifi)
+        self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+        self.section_buttons = {}
+        self.section_panels = {}
 
         title = QLabel("Settings")
         title.setObjectName("dialogTitle")
-        title.setFont(QFont("Sans Serif", 24, QFont.Bold))
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
+
+        nav_row = QHBoxLayout()
+        nav_row.setSpacing(metrics["nav_spacing"])
+        for section_id, label in (
+            ("auto", "Auto Open"),
+            ("remote", "Remote Login"),
+            ("wifi", "Wi-Fi"),
+            ("update", "Update"),
+        ):
+            button = QPushButton(label)
+            button.setProperty("tileVariant", "dialogSecondary")
+            button.setProperty("sectionNav", "true")
+            button.clicked.connect(lambda checked=False, current=section_id: self.show_section(current))
+            nav_row.addWidget(button)
+            self.section_buttons[section_id] = button
+        layout.addLayout(nav_row)
+
+        self.content_host = QWidget()
+        self.content_layout = QVBoxLayout(self.content_host)
+        self.content_layout.setContentsMargins(0, 6, 0, 0)
+        self.content_layout.setSpacing(0)
+        layout.addWidget(self.content_host, 1)
+
+        auto_panel = QWidget()
+        auto_layout = QVBoxLayout(auto_panel)
+        auto_layout.setContentsMargins(0, 0, 0, 0)
+        auto_layout.setSpacing(metrics["dialog_spacing"])
 
         auto_title = QLabel("Auto Open")
         auto_title.setObjectName("dialogSection")
-        auto_title.setFont(QFont("Sans Serif", 18, QFont.Bold))
-        layout.addWidget(auto_title)
+        auto_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        auto_layout.addWidget(auto_title)
 
         auto_subtitle = QLabel("Choose which app or site opens automatically after LinuxTV sits idle.")
         auto_subtitle.setObjectName("dialogSubtitle")
         auto_subtitle.setWordWrap(True)
-        auto_subtitle.setFont(QFont("Sans Serif", 14))
-        layout.addWidget(auto_subtitle)
+        auto_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        auto_layout.addWidget(auto_subtitle)
 
         self.auto_launch_combo = QComboBox()
-        self.auto_launch_combo.setMinimumHeight(44)
+        self.auto_launch_combo.setMinimumHeight(metrics["input_min_height"])
+        self._style_settings_combo_popup(self.auto_launch_combo)
         self.auto_launch_combo.addItem("Disabled", ("", ""))
         selected_kind = str(auto_launch.get("app_kind", "")).strip()
         selected_target = str(auto_launch.get("app_target", "")).strip()
@@ -1504,54 +1631,140 @@ class SettingsDialog(QDialog):
             if option["kind"] == selected_kind and option["target"] == selected_target:
                 selected_index = index
         self.auto_launch_combo.setCurrentIndex(selected_index)
-        layout.addWidget(self.auto_launch_combo)
+        auto_layout.addWidget(self.auto_launch_combo)
 
         self.delay_input = QLineEdit()
         self.delay_input.setPlaceholderText("Idle delay in seconds")
         self.delay_input.setText(str(auto_launch.get("delay_seconds", AUTO_LAUNCH_IDLE_MS // 1000)))
-        self.delay_input.setMinimumHeight(44)
-        layout.addWidget(self.delay_input)
+        self.delay_input.setMinimumHeight(metrics["input_min_height"])
+        auto_layout.addWidget(self.delay_input)
 
         auto_helper = QLabel("Pick Disabled to turn auto open off. Enter a whole number of seconds.")
         auto_helper.setObjectName("dialogSubtitle")
         auto_helper.setWordWrap(True)
-        auto_helper.setFont(QFont("Sans Serif", 13))
-        layout.addWidget(auto_helper)
+        auto_helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
+        auto_layout.addWidget(auto_helper)
+
+        remote_panel = QWidget()
+        remote_layout = QVBoxLayout(remote_panel)
+        remote_layout.setContentsMargins(0, 0, 0, 0)
+        remote_layout.setSpacing(metrics["dialog_spacing"])
 
         remote_title = QLabel("Remote Login")
         remote_title.setObjectName("dialogSection")
-        remote_title.setFont(QFont("Sans Serif", 18, QFont.Bold))
-        layout.addWidget(remote_title)
+        remote_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        remote_layout.addWidget(remote_title)
 
         subtitle = QLabel("Set the phone credentials required to control LinuxTV.")
         subtitle.setObjectName("dialogSubtitle")
         subtitle.setWordWrap(True)
-        subtitle.setFont(QFont("Sans Serif", 14))
-        layout.addWidget(subtitle)
+        subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        remote_layout.addWidget(subtitle)
 
         self.username_input = QLineEdit()
         self.username_input.setPlaceholderText("Username")
         self.username_input.setText(username_text)
-        self.username_input.setMinimumHeight(44)
-        layout.addWidget(self.username_input)
+        self.username_input.setMinimumHeight(metrics["input_min_height"])
+        remote_layout.addWidget(self.username_input)
 
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Password")
         self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setMinimumHeight(44)
-        layout.addWidget(self.password_input)
+        self.password_input.setMinimumHeight(metrics["input_min_height"])
+        remote_layout.addWidget(self.password_input)
 
         self.confirm_input = QLineEdit()
         self.confirm_input.setPlaceholderText("Confirm password")
         self.confirm_input.setEchoMode(QLineEdit.Password)
-        self.confirm_input.setMinimumHeight(44)
-        layout.addWidget(self.confirm_input)
+        self.confirm_input.setMinimumHeight(metrics["input_min_height"])
+        remote_layout.addWidget(self.confirm_input)
 
         helper = QLabel("Leave all three fields empty to disable phone authentication.")
         helper.setObjectName("dialogSubtitle")
         helper.setWordWrap(True)
-        helper.setFont(QFont("Sans Serif", 13))
-        layout.addWidget(helper)
+        helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
+        remote_layout.addWidget(helper)
+
+        wifi_panel = QWidget()
+        wifi_layout = QVBoxLayout(wifi_panel)
+        wifi_layout.setContentsMargins(0, 0, 0, 0)
+        wifi_layout.setSpacing(metrics["dialog_spacing"])
+
+        wifi_title = QLabel("Wi-Fi")
+        wifi_title.setObjectName("dialogSection")
+        wifi_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        wifi_layout.addWidget(wifi_title)
+
+        wifi_subtitle = QLabel("Scan for nearby networks, enter a password if needed, and connect without leaving LinuxTV.")
+        wifi_subtitle.setObjectName("dialogSubtitle")
+        wifi_subtitle.setWordWrap(True)
+        wifi_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        wifi_layout.addWidget(wifi_subtitle)
+
+        self.wifi_combo = QComboBox()
+        self.wifi_combo.setEditable(True)
+        self.wifi_combo.setMinimumHeight(metrics["input_min_height"] + 2)
+        self._style_settings_combo_popup(self.wifi_combo)
+        self.wifi_combo.lineEdit().setPlaceholderText("Select or type a Wi-Fi network name")
+        wifi_layout.addWidget(self.wifi_combo)
+
+        self.wifi_password_input = QLineEdit()
+        self.wifi_password_input.setPlaceholderText("Wi-Fi password")
+        self.wifi_password_input.setEchoMode(QLineEdit.Password)
+        self.wifi_password_input.setMinimumHeight(metrics["input_min_height"] + 2)
+        wifi_layout.addWidget(self.wifi_password_input)
+
+        wifi_button_row = QHBoxLayout()
+        self.refresh_wifi_button = QPushButton("Refresh Networks")
+        self.refresh_wifi_button.setProperty("tileVariant", "dialogSecondary")
+        self.refresh_wifi_button.clicked.connect(self.refresh_wifi_networks)
+        wifi_button_row.addWidget(self.refresh_wifi_button)
+
+        self.connect_wifi_button = QPushButton("Connect Wi-Fi")
+        self.connect_wifi_button.setProperty("tileVariant", "accent")
+        self.connect_wifi_button.clicked.connect(self.connect_wifi)
+        wifi_button_row.addWidget(self.connect_wifi_button)
+        wifi_layout.addLayout(wifi_button_row)
+
+        self.wifi_status_label = QLabel("")
+        self.wifi_status_label.setObjectName("dialogStatus")
+        self.wifi_status_label.setWordWrap(True)
+        wifi_layout.addWidget(self.wifi_status_label)
+
+        update_panel = QWidget()
+        update_layout = QVBoxLayout(update_panel)
+        update_layout.setContentsMargins(0, 0, 0, 0)
+        update_layout.setSpacing(metrics["dialog_spacing"])
+
+        update_title = QLabel("Update LinuxTV")
+        update_title.setObjectName("dialogSection")
+        update_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        update_layout.addWidget(update_title)
+
+        update_subtitle = QLabel("Pull the latest LinuxTV changes from GitHub and sync them into this device.")
+        update_subtitle.setObjectName("dialogSubtitle")
+        update_subtitle.setWordWrap(True)
+        update_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        update_layout.addWidget(update_subtitle)
+
+        update_button = QPushButton("Update From GitHub")
+        update_button.setProperty("tileVariant", "accent")
+        update_button.clicked.connect(self.run_update_action)
+        update_layout.addWidget(update_button)
+
+        self.update_status_label = QLabel("")
+        self.update_status_label.setObjectName("dialogStatus")
+        self.update_status_label.setWordWrap(True)
+        update_layout.addWidget(self.update_status_label)
+
+        for section_id, panel in (
+            ("auto", auto_panel),
+            ("remote", remote_panel),
+            ("wifi", wifi_panel),
+            ("update", update_panel),
+        ):
+            self.section_panels[section_id] = panel
+            self.content_layout.addWidget(panel)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -1567,81 +1780,134 @@ class SettingsDialog(QDialog):
         button_row.addWidget(save_button)
 
         layout.addLayout(button_row)
+        self.set_wifi_networks(wifi_networks, current_wifi)
+        self.set_wifi_loading_state(False)
+        if not self._wifi_has_loaded and self.wifi_refresh_callback:
+            self.wifi_status_label.setText("Open this section to fetch nearby Wi-Fi networks.")
+        self.setStyleSheet(dialog_stylesheet(metrics))
+        self.show_section("auto")
 
-        self.setStyleSheet(
+    def _style_settings_combo_popup(self, combo: QComboBox):
+        popup = combo.view()
+        if popup is None:
+            return
+        popup.setStyleSheet(
             """
-            QDialog {
-                background-color: #1a1a1a;
-                border: 2px solid #333333;
-                border-radius: 16px;
-            }
-            QLabel#dialogTitle {
-                color: #ffffff;
-            }
-            QLabel#dialogSection {
-                color: #e0e0e0;
-                padding-top: 8px;
-                font-weight: 600;
-            }
-            QLabel#dialogSubtitle {
-                color: #bdbdbd;
-            }
-            QLineEdit, QComboBox {
-                background-color: #0d0d0d;
-                color: #e8e8e8;
-                border: 2px solid #333333;
-                border-radius: 12px;
-                padding: 12px 16px;
-                font-size: 15px;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border: 2px solid #e53935;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 32px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1a1a1a;
-                color: #e8e8e8;
-                border: 2px solid #333333;
-                selection-background-color: #e53935;
-                selection-color: #ffffff;
-            }
-            QPushButton[tileVariant="dialogSecondary"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #e0e0e0;
-                border: 2px solid #444444;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 500;
-            }
-            QPushButton[tileVariant="dialogSecondary"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3a3a3a, stop:1 #2a2a2a);
-                border: 2px solid #e53935;
-            }
-            QPushButton[tileVariant="accent"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                color: #ffffff;
-                border: 2px solid #ff5252;
-                border-radius: 12px;
-                padding: 14px 24px;
-                min-width: 110px;
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QPushButton[tileVariant="accent"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5252, stop:1 #e53935);
-                border: 2px solid #ff867f;
-            }
+            background-color: #141a21;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+            alternate-background-color: #10161d;
             """
         )
+
+    def show_section(self, section_id: str):
+        for key, panel in self.section_panels.items():
+            panel.setVisible(key == section_id)
+        for key, button in self.section_buttons.items():
+            button.setProperty("tileVariant", "accent" if key == section_id else "dialogSecondary")
+            button.style().unpolish(button)
+            button.style().polish(button)
+        if section_id == "wifi":
+            QTimer.singleShot(0, self.ensure_wifi_networks_loaded)
+
+    def set_wifi_loading_state(self, loading: bool, message=""):
+        self._wifi_scan_in_progress = loading
+        self.refresh_wifi_button.setEnabled(not loading and bool(self.wifi_refresh_callback))
+        self.connect_wifi_button.setEnabled(not loading and bool(self.wifi_connect_callback))
+        if loading and message:
+            self.wifi_status_label.setText(message)
+
+    def ensure_wifi_networks_loaded(self, force=False):
+        if not self.wifi_refresh_callback:
+            self.set_wifi_loading_state(False)
+            self.wifi_status_label.setText("Wi-Fi scanning is not available on this system.")
+            return
+        if self._wifi_scan_in_progress:
+            return
+        if self._wifi_has_loaded and not force:
+            return
+        status_text = "Refreshing Wi-Fi networks..." if force else "Fetching nearby Wi-Fi networks..."
+        self.set_wifi_loading_state(True, status_text)
+        threading.Thread(
+            target=self._run_wifi_scan,
+            name="wifi-settings-scan",
+            daemon=True,
+        ).start()
+
+    def _run_wifi_scan(self):
+        try:
+            networks, current_wifi, message = self.wifi_refresh_callback()
+        except Exception as exc:
+            logging.exception("Failed to refresh Wi-Fi networks from settings")
+            networks, current_wifi, message = [], "", f"Could not scan for Wi-Fi networks: {exc}"
+        self.wifi_scan_finished.emit(networks, current_wifi, message)
+
+    def handle_wifi_scan_finished(self, wifi_networks, current_wifi, message):
+        self.set_wifi_loading_state(False)
+        self._wifi_has_loaded = True
+        self.set_wifi_networks(wifi_networks or [], current_wifi)
+        if message:
+            self.wifi_status_label.setText(message)
+
+    def set_wifi_networks(self, wifi_networks, current_wifi=""):
+        current_text = self.wifi_combo.currentText().strip()
+        self.wifi_combo.blockSignals(True)
+        self.wifi_combo.clear()
+        selected_index = -1
+        for index, option in enumerate(wifi_networks):
+            label = option.get("label", option.get("ssid", ""))
+            ssid = option.get("ssid", "")
+            self.wifi_combo.addItem(label, dict(option))
+            if current_wifi and ssid == current_wifi:
+                selected_index = index
+        self.wifi_combo.blockSignals(False)
+
+        if selected_index >= 0:
+            self.wifi_combo.setCurrentIndex(selected_index)
+            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
+            return
+
+        if current_text:
+            self.wifi_combo.setEditText(current_text)
+        elif current_wifi:
+            self.wifi_combo.setEditText(current_wifi)
+            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
+        elif wifi_networks:
+            self.wifi_combo.setCurrentIndex(0)
+            self.wifi_status_label.setText("Choose a network and connect from here.")
+        else:
+            self.wifi_combo.setEditText("")
+            self.wifi_status_label.setText("No Wi-Fi networks loaded yet. Open or refresh this section to scan.")
+
+    def refresh_wifi_networks(self):
+        self.ensure_wifi_networks_loaded(force=True)
+
+    def connect_wifi(self):
+        if self._wifi_scan_in_progress:
+            self.wifi_status_label.setText("Still fetching nearby Wi-Fi networks. Try again in a moment.")
+            return
+        if not self.wifi_connect_callback:
+            self.wifi_status_label.setText("Wi-Fi connection is not available on this system.")
+            return
+        selected_network = self.wifi_combo.currentData()
+        if not isinstance(selected_network, dict):
+            selected_network = {"ssid": self.wifi_combo.currentText().strip(), "security": ""}
+        password = self.wifi_password_input.text()
+        success, message, current_wifi = self.wifi_connect_callback(selected_network, password)
+        if current_wifi:
+            self.refresh_wifi_networks()
+        self.wifi_status_label.setText(message)
+        if success:
+            self.wifi_password_input.clear()
+
+    def run_update_action(self):
+        if not self.update_callback:
+            self.update_status_label.setText("Updater is not available on this system.")
+            return
+        success, message = self.update_callback()
+        self.update_status_label.setText(message)
 
     def values(self):
         selected_kind, selected_target = self.auto_launch_combo.currentData()
@@ -1734,6 +2000,87 @@ class LauncherWindow(QMainWindow):
         self.move(geometry.topLeft())
         self.showFullScreen()
 
+    def compute_ui_metrics(self):
+        geometry = self.get_target_geometry()
+        width = max(geometry.width(), 1280)
+        height = max(geometry.height(), 720)
+        compact = width <= 1600 or height <= 950
+        if compact:
+            return {
+                "compact": True,
+                "main_margin_x": 24,
+                "main_margin_top": 20,
+                "main_margin_bottom": 20,
+                "main_spacing": 14,
+                "hero_margin_x": 22,
+                "hero_margin_y": 18,
+                "hero_spacing": 6,
+                "hero_title_font": 28,
+                "hero_title_css": 28,
+                "settings_button_size": 40,
+                "settings_button_font": 16,
+                "section_heading_font": 18,
+                "footer_font": 12,
+                "status_font": 12,
+                "tile_stack_spacing": 14,
+                "row_label_css": 18,
+                "row_scroll_height": 212,
+                "row_content_margin_x": 8,
+                "row_content_margin_y": 6,
+                "row_content_spacing": 18,
+                "tile_width": 280,
+                "tile_height": 152,
+                "tile_font_size": 14,
+                "tile_icon_size": 72,
+                "tile_font_css": 14,
+                "tile_padding_lr": 20,
+                "tile_padding_top": 22,
+                "tile_padding_bottom": 18,
+                "tile_padding_top_subtitle": 14,
+                "tile_padding_bottom_subtitle": 14,
+                "action_button_size": 36,
+                "action_button_font_css": 14,
+                "footer_padding_y": 6,
+                "cancel_button_min_width": 132,
+            }
+        return {
+            "compact": False,
+            "main_margin_x": 48,
+            "main_margin_top": 40,
+            "main_margin_bottom": 32,
+            "main_spacing": 20,
+            "hero_margin_x": 32,
+            "hero_margin_y": 24,
+            "hero_spacing": 8,
+            "hero_title_font": 42,
+            "hero_title_css": 36,
+            "settings_button_size": 48,
+            "settings_button_font": 20,
+            "section_heading_font": 24,
+            "footer_font": 15,
+            "status_font": 14,
+            "tile_stack_spacing": 22,
+            "row_label_css": 24,
+            "row_scroll_height": 290,
+            "row_content_margin_x": 12,
+            "row_content_margin_y": 8,
+            "row_content_spacing": 28,
+            "tile_width": 400,
+            "tile_height": 230,
+            "tile_font_size": 19,
+            "tile_icon_size": 130,
+            "tile_font_css": 18,
+            "tile_padding_lr": 32,
+            "tile_padding_top": 40,
+            "tile_padding_bottom": 28,
+            "tile_padding_top_subtitle": 18,
+            "tile_padding_bottom_subtitle": 18,
+            "action_button_size": 44,
+            "action_button_font_css": 18,
+            "footer_padding_y": 12,
+            "cancel_button_min_width": 160,
+        }
+
     def showEvent(self, event):
         super().showEvent(event)
         # Delay the reset until the window is actually visible so auto-open
@@ -1741,17 +2088,28 @@ class LauncherWindow(QMainWindow):
         QTimer.singleShot(0, self.reset_auto_launch_timer)
 
     def setup_ui(self):
+        self.ui_metrics = self.compute_ui_metrics()
         central = QWidget()
         central.setObjectName("centralShell")
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(48, 40, 48, 32)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(
+            self.ui_metrics["main_margin_x"],
+            self.ui_metrics["main_margin_top"],
+            self.ui_metrics["main_margin_x"],
+            self.ui_metrics["main_margin_bottom"],
+        )
+        main_layout.setSpacing(self.ui_metrics["main_spacing"])
 
         hero = QWidget()
         hero.setObjectName("heroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(32, 24, 32, 24)
-        hero_layout.setSpacing(8)
+        hero_layout.setContentsMargins(
+            self.ui_metrics["hero_margin_x"],
+            self.ui_metrics["hero_margin_y"],
+            self.ui_metrics["hero_margin_x"],
+            self.ui_metrics["hero_margin_y"],
+        )
+        hero_layout.setSpacing(self.ui_metrics["hero_spacing"])
 
         hero_top_row = QHBoxLayout()
         hero_top_row.setContentsMargins(0, 0, 0, 0)
@@ -1760,7 +2118,7 @@ class LauncherWindow(QMainWindow):
         hero_top_row.addStretch(1)
         title = QLabel("LinuxTV")
         title.setObjectName("heroTitle")
-        title.setFont(QFont("Sans Serif", 42, QFont.Bold))
+        title.setFont(QFont("Sans Serif", self.ui_metrics["hero_title_font"], QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         hero_top_row.addWidget(title)
         hero_top_row.addStretch(1)
@@ -1770,8 +2128,8 @@ class LauncherWindow(QMainWindow):
         settings_button.setText("⚙")
         settings_button.setToolTip("Open LinuxTV settings")
         settings_button.setCursor(Qt.PointingHandCursor)
-        settings_button.setFixedSize(48, 48)
-        settings_button.setFont(QFont("Sans Serif", 20))
+        settings_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        settings_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         settings_button.clicked.connect(self.open_remote_settings)
         hero_top_row.addWidget(settings_button)
         hero_layout.addLayout(hero_top_row)
@@ -1786,7 +2144,7 @@ class LauncherWindow(QMainWindow):
         container.setObjectName("tileContainer")
         self.tile_stack = QVBoxLayout(container)
         self.tile_stack.setContentsMargins(8, 8, 8, 8)
-        self.tile_stack.setSpacing(22)
+        self.tile_stack.setSpacing(self.ui_metrics["tile_stack_spacing"])
         self.tile_stack.setAlignment(Qt.AlignTop)
 
         self.populate_tiles()
@@ -1797,7 +2155,7 @@ class LauncherWindow(QMainWindow):
         footer = QLabel("Navigate with arrows • Select with Enter • Add apps with the Add App tile • Exit with Esc")
         footer.setObjectName("footerHint")
         footer.setWordWrap(True)
-        footer.setFont(QFont("Sans Serif", 15))
+        footer.setFont(QFont("Sans Serif", self.ui_metrics["footer_font"]))
         footer.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(footer)
 
@@ -1809,7 +2167,7 @@ class LauncherWindow(QMainWindow):
         self.auto_launch_status_label = QLabel("")
         self.auto_launch_status_label.setObjectName("autoLaunchStatus")
         self.auto_launch_status_label.setWordWrap(True)
-        self.auto_launch_status_label.setFont(QFont("Sans Serif", 14))
+        self.auto_launch_status_label.setFont(QFont("Sans Serif", self.ui_metrics["status_font"]))
         self.auto_launch_status_label.setAlignment(Qt.AlignCenter)
         self.auto_launch_status_label.hide()
         auto_launch_status_row.addWidget(self.auto_launch_status_label)
@@ -1833,8 +2191,8 @@ class LauncherWindow(QMainWindow):
         self.reset_auto_launch_timer()
 
     def apply_theme(self):
-        self.setStyleSheet(
-            """
+        m = self.ui_metrics
+        stylesheet = """
             QMainWindow {
                 background: #0d0d0d;
             }
@@ -1854,8 +2212,8 @@ class LauncherWindow(QMainWindow):
                     stop:0 #2a2a2a, stop:1 #1f1f1f);
                 color: #e0e0e0;
                 border: 1px solid #444444;
-                border-radius: 20px;
-                font-size: 18px;
+                border-radius: __SETTINGS_RADIUS__px;
+                font-size: __SETTINGS_FONT__px;
                 padding-bottom: 1px;
             }
             QToolButton#settingsButton:hover {
@@ -1872,7 +2230,7 @@ class LauncherWindow(QMainWindow):
                 color: #ffffff;
                 font-weight: bold;
                 letter-spacing: 1px;
-                font-size: 36px;
+                font-size: __HERO_TITLE__px;
             }
             QScrollArea#tileScroll, QWidget#tileContainer {
                 background: transparent;
@@ -1883,7 +2241,7 @@ class LauncherWindow(QMainWindow):
             }
             QLabel[rowHeading="true"] {
                 color: #ffffff;
-                font-size: 24px;
+                font-size: __ROW_HEADING__px;
                 font-weight: bold;
                 padding: 12px 8px 8px 8px;
                 letter-spacing: 0.5px;
@@ -1914,13 +2272,13 @@ class LauncherWindow(QMainWindow):
                 color: #e8e8e8;
                 border: 2px solid #333333;
                 border-radius: 16px;
-                padding: 24px 28px;
-                padding-left: 32px;
-                padding-right: 32px;
-                padding-top: 40px;
-                padding-bottom: 28px;
+                padding: __TILE_PADDING_BOTTOM__px __TILE_PADDING_LR__px;
+                padding-left: __TILE_PADDING_LR__px;
+                padding-right: __TILE_PADDING_LR__px;
+                padding-top: __TILE_PADDING_TOP__px;
+                padding-bottom: __TILE_PADDING_BOTTOM__px;
                 text-align: left;
-                font-size: 18px;
+                font-size: __TILE_FONT__px;
                 font-weight: 500;
             }
             QPushButton[tileVariant="default"]:hover {
@@ -1941,13 +2299,13 @@ class LauncherWindow(QMainWindow):
                 color: #ffffff;
                 border: 2px solid #ff5252;
                 border-radius: 16px;
-                padding: 24px 28px;
-                padding-left: 32px;
-                padding-right: 32px;
-                padding-top: 40px;
-                padding-bottom: 28px;
+                padding: __TILE_PADDING_BOTTOM__px __TILE_PADDING_LR__px;
+                padding-left: __TILE_PADDING_LR__px;
+                padding-right: __TILE_PADDING_LR__px;
+                padding-top: __TILE_PADDING_TOP__px;
+                padding-bottom: __TILE_PADDING_BOTTOM__px;
                 text-align: left;
-                font-size: 18px;
+                font-size: __TILE_FONT__px;
                 font-weight: 600;
             }
             QPushButton[tileVariant="accent"]:hover {
@@ -2000,19 +2358,19 @@ class LauncherWindow(QMainWindow):
                 border: 1px solid #e53935;
             }
             QPushButton[hasSubtitle="true"] {
-                padding-top: 18px;
-                padding-bottom: 18px;
+                padding-top: __TILE_SUBTITLE_TOP__px;
+                padding-bottom: __TILE_SUBTITLE_BOTTOM__px;
             }
             QLabel#footerHint {
                 color: #9e9e9e;
-                padding: 12px 20px;
-                font-size: 15px;
+                padding: __FOOTER_PADDING_Y__px 20px;
+                font-size: __FOOTER_FONT__px;
                 letter-spacing: 0.3px;
             }
             QLabel#autoLaunchStatus {
                 color: #ff5252;
                 padding: 0 20px 12px 20px;
-                font-size: 15px;
+                font-size: __STATUS_FONT__px;
                 font-weight: 500;
             }
             QPushButton#autoLaunchCancelButton {
@@ -2022,8 +2380,8 @@ class LauncherWindow(QMainWindow):
                 border: 1px solid #444444;
                 border-radius: 16px;
                 padding: 12px 20px;
-                min-width: 160px;
-                font-size: 15px;
+                min-width: __CANCEL_WIDTH__px;
+                font-size: __STATUS_FONT__px;
                 font-weight: 500;
             }
             QPushButton#autoLaunchCancelButton:hover {
@@ -2037,7 +2395,25 @@ class LauncherWindow(QMainWindow):
                 border: 1px solid #e53935;
             }
             """
-        )
+        replacements = {
+            "__SETTINGS_RADIUS__": str(max(14, m["settings_button_size"] // 2 - 4)),
+            "__SETTINGS_FONT__": str(max(14, m["settings_button_font"])),
+            "__HERO_TITLE__": str(m["hero_title_css"]),
+            "__ROW_HEADING__": str(m["row_label_css"]),
+            "__TILE_PADDING_BOTTOM__": str(m["tile_padding_bottom"]),
+            "__TILE_PADDING_LR__": str(m["tile_padding_lr"]),
+            "__TILE_PADDING_TOP__": str(m["tile_padding_top"]),
+            "__TILE_FONT__": str(m["tile_font_css"]),
+            "__TILE_SUBTITLE_TOP__": str(m["tile_padding_top_subtitle"]),
+            "__TILE_SUBTITLE_BOTTOM__": str(m["tile_padding_bottom_subtitle"]),
+            "__FOOTER_PADDING_Y__": str(m["footer_padding_y"]),
+            "__FOOTER_FONT__": str(m["footer_font"]),
+            "__STATUS_FONT__": str(m["status_font"]),
+            "__CANCEL_WIDTH__": str(m["cancel_button_min_width"]),
+        }
+        for token, value in replacements.items():
+            stylesheet = stylesheet.replace(token, value)
+        self.setStyleSheet(stylesheet)
 
     def clear_tiles(self):
         while self.tile_stack.count():
@@ -2074,13 +2450,18 @@ class LauncherWindow(QMainWindow):
             row_scroll.setWidgetResizable(False)
             row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            row_scroll.setFixedHeight(290)
+            row_scroll.setFixedHeight(self.ui_metrics["row_scroll_height"])
 
             row_widget = QWidget()
             row_widget.setProperty("rowContent", "true")
             row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(12, 8, 12, 8)
-            row_layout.setSpacing(28)
+            row_layout.setContentsMargins(
+                self.ui_metrics["row_content_margin_x"],
+                self.ui_metrics["row_content_margin_y"],
+                self.ui_metrics["row_content_margin_x"],
+                self.ui_metrics["row_content_margin_y"],
+            )
+            row_layout.setSpacing(self.ui_metrics["row_content_spacing"])
 
             row_tiles = []
             for entry in entries:
@@ -2090,6 +2471,7 @@ class LauncherWindow(QMainWindow):
                     "",
                     entry["tooltip"],
                     subtitle=entry["subtitle"],
+                    metrics=self.ui_metrics,
                 )
                 tile.entry_kind = entry["kind"]
                 tile.entry_item = app
@@ -2098,6 +2480,7 @@ class LauncherWindow(QMainWindow):
                     tile,
                     lambda checked=False, item=app, kind=entry["kind"]: self.prompt_edit_entry(kind, item),
                     lambda checked=False, item=app, kind=entry["kind"]: self.prompt_delete_entry(kind, item),
+                    metrics=self.ui_metrics,
                 )
                 tile.card_shell = card
                 tile.row_scroll = row_scroll
@@ -2125,6 +2508,7 @@ class LauncherWindow(QMainWindow):
             "Save a new app or site to config.yaml",
             variant="accent",
             subtitle="Add a command or website",
+            metrics=self.ui_metrics,
         )
         add_tile.clicked.connect(self.prompt_add_entry)
         add_section = QWidget()
@@ -2141,13 +2525,18 @@ class LauncherWindow(QMainWindow):
         add_row_scroll.setWidgetResizable(False)
         add_row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         add_row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        add_row_scroll.setFixedHeight(290)
+        add_row_scroll.setFixedHeight(self.ui_metrics["row_scroll_height"])
         add_row_widget = QWidget()
         add_row_widget.setProperty("rowContent", "true")
         add_row_layout = QHBoxLayout(add_row_widget)
-        add_row_layout.setContentsMargins(12, 8, 12, 8)
-        add_row_layout.setSpacing(28)
-        add_card = AppCard(add_tile, show_actions=False)
+        add_row_layout.setContentsMargins(
+            self.ui_metrics["row_content_margin_x"],
+            self.ui_metrics["row_content_margin_y"],
+            self.ui_metrics["row_content_margin_x"],
+            self.ui_metrics["row_content_margin_y"],
+        )
+        add_row_layout.setSpacing(self.ui_metrics["row_content_spacing"])
+        add_card = AppCard(add_tile, show_actions=False, metrics=self.ui_metrics)
         add_tile.card_shell = add_card
         add_tile.row_scroll = add_row_scroll
         add_tile.section_widget = add_section
@@ -2474,6 +2863,11 @@ class LauncherWindow(QMainWindow):
             auth.get("username", ""),
             auto_launch,
             self.get_auto_launch_options(),
+            [],
+            "",
+            self.scan_wifi_networks,
+            self.connect_to_wifi,
+            self.update_from_github,
             self,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -2525,6 +2919,290 @@ class LauncherWindow(QMainWindow):
             QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is enabled for LinuxTV Remote.")
         else:
             QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is disabled.")
+
+    def scan_wifi_networks(self):
+        nmcli = shutil.which("nmcli")
+        if not nmcli:
+            return [], "", "NetworkManager tools are not installed. Install `network-manager` to manage Wi-Fi here."
+
+        current_wifi = ""
+        try:
+            current_result = subprocess.run(
+                [nmcli, "--colors", "no", "--terse", "--fields", "NAME,TYPE", "connection", "show", "--active"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if current_result.returncode == 0:
+                for line in current_result.stdout.splitlines():
+                    parts = line.split(":", 1)
+                    if len(parts) == 2 and parts[1].strip() == "802-11-wireless":
+                        current_wifi = parts[0].strip()
+                        break
+        except Exception:
+            logging.exception("Failed to read active Wi-Fi connection")
+
+        try:
+            result = subprocess.run(
+                [
+                    nmcli,
+                    "--colors",
+                    "no",
+                    "--escape",
+                    "yes",
+                    "--terse",
+                    "--fields",
+                    "IN-USE,SSID,SIGNAL,SECURITY",
+                    "device",
+                    "wifi",
+                    "list",
+                    "--rescan",
+                    "yes",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+        except Exception as exc:
+            logging.exception("Failed to scan Wi-Fi networks")
+            return [], current_wifi, f"Could not scan for Wi-Fi networks: {exc}"
+
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "Unknown error").strip()
+            return [], current_wifi, f"Could not scan for Wi-Fi networks: {message}"
+
+        networks = []
+        seen_ssids = set()
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            parts = line.split(":")
+            if len(parts) < 4:
+                continue
+
+            in_use = parts[0].strip()
+            security = parts[-1].strip() or "Open"
+            signal_strength = parts[-2].strip() or "?"
+            ssid = ":".join(parts[1:-2]).replace("\\:", ":").strip()
+            if not ssid or ssid in seen_ssids:
+                continue
+
+            active = in_use == "*"
+            label = f"{ssid}  |  {signal_strength}%  |  {security}"
+            if active:
+                label = f"{label}  |  Connected"
+            networks.append(
+                {
+                    "ssid": ssid,
+                    "label": label,
+                    "security": security,
+                    "signal": int(signal_strength) if signal_strength.isdigit() else -1,
+                    "active": active,
+                }
+            )
+            seen_ssids.add(ssid)
+
+        if current_wifi and current_wifi not in seen_ssids:
+            networks.insert(
+                0,
+                {
+                    "ssid": current_wifi,
+                    "label": f"{current_wifi}  |  Connected",
+                    "security": "",
+                    "signal": 101,
+                    "active": True,
+                },
+            )
+
+        networks.sort(key=lambda item: (0 if item.get("active") else 1, -(item.get("signal", -1)), item.get("ssid", "").lower()))
+        for item in networks:
+            item.pop("signal", None)
+            item.pop("active", None)
+
+        message = f"Found {len(networks)} network(s)." if networks else "No Wi-Fi networks found. Try Refresh Networks again."
+        return networks, current_wifi, message
+
+    def connect_to_wifi(self, network_info, password: str):
+        if isinstance(network_info, dict):
+            ssid = str(network_info.get("ssid", "")).strip()
+            security = str(network_info.get("security", "")).strip()
+        else:
+            ssid = str(network_info or "").strip()
+            security = ""
+        if not ssid:
+            return False, "Enter or choose a Wi-Fi network name first.", ""
+
+        nmcli = shutil.which("nmcli")
+        if not nmcli:
+            return False, "NetworkManager tools are not installed on this device.", ""
+
+        device_name = ""
+        try:
+            device_result = subprocess.run(
+                [nmcli, "--colors", "no", "--terse", "--fields", "DEVICE,TYPE,STATE", "device", "status"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if device_result.returncode == 0:
+                for line in device_result.stdout.splitlines():
+                    parts = line.split(":")
+                    if len(parts) >= 2 and parts[1].strip() == "wifi":
+                        device_name = parts[0].strip()
+                        break
+        except Exception:
+            logging.exception("Failed to inspect Wi-Fi device status")
+
+        secure_network = bool(security and security.lower() not in ("", "--", "open"))
+
+        # If a profile already exists, try bringing it up first.
+        try:
+            profile_result = subprocess.run(
+                [nmcli, "--colors", "no", "--terse", "--fields", "NAME,TYPE", "connection", "show"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if profile_result.returncode == 0:
+                for line in profile_result.stdout.splitlines():
+                    parts = line.split(":", 1)
+                    if len(parts) == 2 and parts[0].strip() == ssid and parts[1].strip() == "802-11-wireless":
+                        up_command = [nmcli, "connection", "up", ssid]
+                        if device_name:
+                            up_command.extend(["ifname", device_name])
+                        up_result = subprocess.run(
+                            up_command,
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=45,
+                        )
+                        if up_result.returncode == 0:
+                            return True, f"Connected to {ssid}.", ssid
+                        break
+        except Exception:
+            logging.exception("Failed to try saved Wi-Fi connection profile")
+
+        if secure_network and not password:
+            return False, f"{ssid} needs a Wi-Fi password before it can connect.", ""
+
+        command = [nmcli, "device", "wifi", "connect", ssid]
+        if secure_network and password:
+            command.extend(["password", password])
+        if device_name:
+            command.extend(["ifname", device_name])
+
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=45,
+            )
+        except Exception as exc:
+            logging.exception("Failed to connect to Wi-Fi")
+            return False, f"Could not connect to {ssid}: {exc}", ""
+
+        if result.returncode != 0 and not secure_network:
+            try:
+                hidden_fallback = [nmcli, "device", "wifi", "connect", ssid, "hidden", "yes"]
+                if device_name:
+                    hidden_fallback.extend(["ifname", device_name])
+                result = subprocess.run(
+                    hidden_fallback,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=45,
+                )
+            except Exception as exc:
+                logging.exception("Failed to retry Wi-Fi connection")
+                return False, f"Could not connect to {ssid}: {exc}", ""
+
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or "Unknown error").strip()
+            return False, f"Could not connect to {ssid}: {message}", ""
+
+        return True, f"Connected to {ssid}.", ssid
+
+    def update_from_github(self):
+        git = shutil.which("git")
+        if not git:
+            return False, "Git is not installed. Install `git` to enable in-app updates."
+
+        app_root = Path(__file__).resolve().parent.parent
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            if (app_root / ".git").exists():
+                result = subprocess.run(
+                    [git, "-C", str(app_root), "pull", "--ff-only", "origin", "main"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    message = (result.stderr or result.stdout or "Unknown error").strip()
+                    return False, f"Update failed: {message}"
+                output = (result.stdout or result.stderr or "").strip()
+                if "Already up to date" in output:
+                    return True, "LinuxTV is already up to date."
+                return True, "LinuxTV was updated from GitHub. Restart the app to load the new version."
+
+            with tempfile.TemporaryDirectory(prefix="linuxtv-update-") as temp_dir:
+                clone_result = subprocess.run(
+                    [git, "clone", "--depth", "1", UPDATE_REPO_URL, temp_dir],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=180,
+                )
+                if clone_result.returncode != 0:
+                    message = (clone_result.stderr or clone_result.stdout or "Unknown error").strip()
+                    return False, f"Update failed: {message}"
+
+                source_root = Path(temp_dir)
+                excluded = {".git", ".venv", ".linuxtv_venv", "__pycache__", ".pytest_cache", ".mypy_cache"}
+                for child in source_root.iterdir():
+                    if child.name in excluded:
+                        continue
+                    target = app_root / child.name
+                    if child.is_dir():
+                        if target.exists() and not target.is_dir():
+                            target.unlink()
+                        if not target.exists():
+                            shutil.copytree(child, target)
+                        else:
+                            self._merge_directory(child, target, excluded)
+                    else:
+                        shutil.copy2(child, target)
+
+            return True, "LinuxTV was updated from GitHub. Restart the app to load the new version."
+        except Exception as exc:
+            logging.exception("Failed to update LinuxTV from GitHub")
+            return False, f"Update failed: {exc}"
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def _merge_directory(self, source_dir: Path, target_dir: Path, excluded=None):
+        excluded = excluded or set()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for child in source_dir.iterdir():
+            if child.name in excluded:
+                continue
+            target = target_dir / child.name
+            if child.is_dir():
+                self._merge_directory(child, target, excluded)
+            else:
+                shutil.copy2(child, target)
 
     def add_native_app(self, name: str, cmd: str):
         native_apps = self.config.setdefault("native_apps", [])

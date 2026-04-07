@@ -31,7 +31,7 @@ fi
 # Step 1: Install system dependencies
 echo "[1/8] Installing system dependencies..."
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv python3-pyqt5 python3-pyqt5.qtwebengine chromium xinit xserver-xorg xauth x11-xserver-utils libxcb-cursor0 pulseaudio-utils pipewire pipewire-pulse wireplumber dbus-user-session wmctrl xdotool openbox
+sudo apt install -y python3 python3-pip python3-venv python3-pyqt5 python3-pyqt5.qtwebengine chromium xinit xserver-xorg xauth x11-xserver-utils libxcb-cursor0 pulseaudio-utils pipewire pipewire-pulse wireplumber dbus-user-session wmctrl xdotool openbox network-manager git flatpak ca-certificates gnupg
 
 # Step 2: Prepare runtime user
 echo "[2/8] Preparing runtime user '$RUNTIME_USER'..."

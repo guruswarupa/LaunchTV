@@ -3,6 +3,7 @@ linux-image-amd64
 systemd-sysv
 sudo
 bash
+git
 
 # X11 / display
 xserver-xorg
@@ -36,6 +37,8 @@ xdotool
 
 # Browser install helper
 curl
+ca-certificates
+gnupg
 
 # D-Bus
 dbus-user-session
@@ -48,6 +51,7 @@ plymouth-themes
 # Media apps
 kodi
 vlc
+flatpak
 
 # Networking
 network-manager

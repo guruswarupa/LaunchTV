@@ -8,7 +8,7 @@ native_apps:
     cmd: "kodi"
     icon: "icons/kodi.png"
   - name: "Stremio"
-    cmd: "stremio"
+    cmd: "flatpak run com.stremio.Stremio"
     icon: "icons/stremio.png"
   - name: "VLC"
     cmd: "vlc"
