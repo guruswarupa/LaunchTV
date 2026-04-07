@@ -1,0 +1,53 @@
+# Core system
+linux-image-amd64
+systemd-sysv
+sudo
+bash
+
+# X11 / display
+xserver-xorg
+xserver-xorg-video-all
+xserver-xorg-input-all
+xinit
+xauth
+x11-xserver-utils
+openbox
+libxcb-cursor0
+
+# Python and Qt
+python3
+python3-pip
+python3-venv
+python3-pyqt5
+python3-pyqt5.qtwebengine
+python3-yaml
+python3-websockets
+python3-evdev
+
+# Audio
+pulseaudio-utils
+pipewire
+pipewire-pulse
+wireplumber
+
+# Window management tools
+wmctrl
+xdotool
+
+# Browser install helper
+curl
+
+# D-Bus
+dbus-user-session
+
+# Boot splash
+plymouth
+plymouth-label
+plymouth-themes
+
+# Media apps
+kodi
+vlc
+
+# Networking
+network-manager

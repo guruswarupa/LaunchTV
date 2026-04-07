@@ -1,0 +1,18 @@
+# live-build working state
+/workdir/
+
+# build logs and outputs
+/build.log
+/*.iso
+/*.img
+/*.packages
+/*.list
+/*.manifest
+/*.contents
+/*.diskdefines
+/*.buildinfo
+/*.changes
+
+# temporary editor/system files
+*~
+.DS_Store

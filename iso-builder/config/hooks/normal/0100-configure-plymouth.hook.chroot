@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+
+if [ -f /usr/share/plymouth/themes/linuxtv/linuxtv.plymouth ]; then
+    plymouth-set-default-theme -R linuxtv || true
+fi

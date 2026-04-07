@@ -1,0 +1,97 @@
+#!/bin/bash
+set -e
+
+INSTALL_DIR="/opt/linuxtv"
+LINUXTV_USER="linuxtv"
+STREMIO_VERSION="4.4.168"
+STREMIO_DEB_URL="https://dl.strem.io/shell-linux/v${STREMIO_VERSION}/stremio_${STREMIO_VERSION}-1_amd64.deb"
+
+useradd -m -s /bin/bash -G video,audio,input,plugdev "$LINUXTV_USER"
+echo "${LINUXTV_USER}:linuxtvbyguru" | chpasswd
+
+VENV_DIR="/opt/linuxtv/.venv"
+
+apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev
+python3 -m venv --system-site-packages "$VENV_DIR"
+"$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
+wget -q "$STREMIO_DEB_URL" -O /tmp/stremio.deb || true
+dpkg -i /tmp/stremio.deb || apt-get install -f -y
+rm -f /tmp/stremio.deb
+
+curl -fsS https://dl.brave.com/install.sh | sh
+
+chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$INSTALL_DIR"
+chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$VENV_DIR"
+ln -sfn "$VENV_DIR" "/home/${LINUXTV_USER}/.linuxtv_venv"
+chown -h "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.linuxtv_venv"
+
+cat > "/home/${LINUXTV_USER}/.xinitrc" <<'XINITRC'
+#!/bin/sh
+export PATH="/opt/linuxtv/.venv/bin:$PATH"
+export LINUXTV_QT_BINDING=PyQt5
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+exec > /tmp/linuxtv_startup.log 2>&1
+
+if [ ! -S "$XDG_RUNTIME_DIR/bus" ] && command -v dbus-daemon >/dev/null 2>&1; then
+  dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user import-environment DISPLAY XAUTHORITY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true
+  systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+fi
+
+if command -v xrandr >/dev/null 2>&1; then
+  HDMI_OUTPUT=$(xrandr --query | awk '/^HDMI[^ ]* connected/{print $1; exit}')
+  INTERNAL_OUTPUT=$(xrandr --query | awk '/^(eDP|LVDS)[^ ]* connected/{print $1; exit}')
+  if [ -n "$HDMI_OUTPUT" ]; then
+    if [ -n "$INTERNAL_OUTPUT" ]; then
+      xrandr --output "$HDMI_OUTPUT" --auto --primary --output "$INTERNAL_OUTPUT" --off || true
+    else
+      xrandr --output "$HDMI_OUTPUT" --auto --primary || true
+    fi
+  fi
+fi
+
+if command -v openbox >/dev/null 2>&1; then
+  openbox &
+  sleep 0.5
+fi
+
+cd /opt/linuxtv/linuxtvdesktop
+exec /opt/linuxtv/.venv/bin/python3 /opt/linuxtv/linuxtvdesktop/launcher.py
+XINITRC
+chmod +x "/home/${LINUXTV_USER}/.xinitrc"
+chown "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.xinitrc"
+
+mkdir -p "/home/${LINUXTV_USER}/.config/linuxtv"
+cp "$INSTALL_DIR/linuxtvdesktop/config.yaml" "/home/${LINUXTV_USER}/.config/linuxtv/config.yaml" 2>/dev/null || true
+chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.config"
+
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${LINUXTV_USER} --noclear %I \$TERM
+EOF
+
+cat >> "/home/${LINUXTV_USER}/.profile" <<'PROFILE'
+
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+  STARTUP_COUNT=${STARTUP_COUNT:-0}
+  export STARTUP_COUNT=$((STARTUP_COUNT + 1))
+  if [ $STARTUP_COUNT -gt 3 ]; then
+    echo "LinuxTV startup failed multiple times."
+    echo "Debug: cat /tmp/linuxtv_startup.log"
+  else
+    exec startx
+  fi
+fi
+PROFILE
+chown "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.profile"
+
+for dm in gdm3 lightdm sddm; do
+  systemctl disable "$dm" 2>/dev/null || true
+done
