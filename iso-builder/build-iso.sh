@@ -27,7 +27,23 @@ rsync -a --delete "$SCRIPT_DIR/config/" "$BUILD_DIR/config/"
 mkdir -p "$BUILD_DIR/config/includes.chroot/opt/linuxtv"
 rsync -a --delete "$REPO_ROOT/linuxtvdesktop/" "$BUILD_DIR/config/includes.chroot/opt/linuxtv/linuxtvdesktop/"
 if [ -d "$REPO_ROOT/linuxtvremote" ]; then
-  rsync -a --delete "$REPO_ROOT/linuxtvremote/" "$BUILD_DIR/config/includes.chroot/opt/linuxtv/linuxtvremote/"
+  rsync -a --delete --delete-excluded \
+    --exclude '.git/' \
+    --exclude 'node_modules/' \
+    --exclude '.expo/' \
+    --exclude '.gradle/' \
+    --exclude 'android/.gradle/' \
+    --exclude 'android/app/build/' \
+    --exclude 'android/build/' \
+    --exclude 'ios/' \
+    --exclude 'dist/' \
+    --exclude 'build/' \
+    --exclude '.DS_Store' \
+    --exclude '*.log' \
+    --exclude '*.tmp' \
+    --exclude 'record.json' \
+    --exclude 'ecord.json' \
+    "$REPO_ROOT/linuxtvremote/" "$BUILD_DIR/config/includes.chroot/opt/linuxtv/linuxtvremote/"
 fi
 
 cd "$BUILD_DIR"

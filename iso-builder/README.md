@@ -39,16 +39,7 @@ On boot, the menu should now show these visible top-level options:
 
 After selecting a boot option, the loading screen uses the Linux remote app icon on a plain black splash.
 
-When you choose `Install LinuxTV`, the installer is preseeded to create:
-
-- Username: `linuxtv`
-- Password: `linuxtvbyguru`
-- Root login: disabled
-
-## Default credentials
-
-- Username: `linuxtv`
-- Password: `linuxtvbyguru`
+When you choose `Install LinuxTV`, the installer uses LinuxTV's preseeded defaults for routine settings while still allowing the normal Debian Installer flow for prompts that need real user input, like storage layout and account creation. This avoids the automated-install Wi-Fi prompt bug that can show an "invalid passphrase" error before you get a chance to enter one.
 
 ## Pre-installed apps
 
@@ -59,9 +50,9 @@ When you choose `Install LinuxTV`, the installer is preseeded to create:
 
 ## Notes
 
-- Stremio is installed from Flathub as `com.stremio.Stremio`.
-- Brave Browser is installed from Brave's official Debian repository.
+- Stremio is installed during the chroot hook from its official Debian package URL.
+- The Stremio version is defined near the top of `config/hooks/live/0100-setup-linuxtv.hook.chroot`.
 - Build on a Debian or Ubuntu host system, or inside a Debian-based container or VM.
 - The `--debian-installer live` live-build option keeps the resulting image installable from the live environment.
 - LinuxTV's required Python runtime dependencies are baked into the image as Debian packages, and the runtime virtualenv lives under `/opt/linuxtv/.venv` so it survives installed-system boots.
-- The installer runs a post-install provisioning step on the target disk so Brave Browser and Flatpak Stremio are installed on the final system too.
+- The install preseed also rewrites the target system's GRUB defaults to keep `quiet splash` enabled, so the LinuxTV Plymouth splash appears after installing to disk as well as in the live session.
