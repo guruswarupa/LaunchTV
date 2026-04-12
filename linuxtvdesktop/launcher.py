@@ -161,6 +161,44 @@ AUTO_LAUNCH_IDLE_MS = 10_000
 UPDATE_REPO_URL = "https://github.com/guruswarupa/LinuxTV"
 
 
+def sync_system_time():
+    timedatectl = shutil.which("timedatectl")
+    if not timedatectl:
+        return False, "timedatectl is not installed."
+
+    try:
+        result = subprocess.run(
+            [timedatectl, "set-ntp", "true"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except Exception as exc:
+        logging.exception("Failed to enable automatic time sync")
+        return False, f"Could not enable automatic time sync: {exc}"
+
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout or "Unknown error").strip()
+        return False, f"Could not enable automatic time sync: {message}"
+
+    try:
+        status_result = subprocess.run(
+            [timedatectl, "show", "--property=NTPSynchronized", "--value"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        ntp_synced = status_result.stdout.strip().lower() == "yes"
+    except Exception:
+        ntp_synced = False
+
+    if ntp_synced:
+        return True, "System time synchronized."
+    return True, "Automatic time sync enabled."
+
+
 def dialog_metrics():
     screen = QApplication.primaryScreen()
     geometry = screen.geometry() if screen else QRect(0, 0, 1920, 1080)
@@ -1980,6 +2018,8 @@ class LauncherWindow(QMainWindow):
 
         self.setup_ui()
         self.apply_fullscreen_to_primary_screen()
+        QTimer.singleShot(1500, self.start_startup_time_sync)
+        QTimer.singleShot(15000, self.start_startup_time_sync)
 
     def get_target_screen(self):
         screen = QApplication.primaryScreen()
@@ -1999,6 +2039,20 @@ class LauncherWindow(QMainWindow):
         self.setGeometry(geometry)
         self.move(geometry.topLeft())
         self.showFullScreen()
+
+    def start_startup_time_sync(self):
+        threading.Thread(
+            target=self._run_startup_time_sync,
+            name="startup-time-sync",
+            daemon=True,
+        ).start()
+
+    def _run_startup_time_sync(self):
+        success, message = sync_system_time()
+        if success:
+            logging.info("Startup time sync: %s", message)
+        else:
+            logging.warning("Startup time sync failed: %s", message)
 
     def compute_ui_metrics(self):
         geometry = self.get_target_geometry()

@@ -31,12 +31,39 @@ fi
 # Step 1: Install system dependencies
 echo "[1/8] Installing system dependencies..."
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv python3-pyqt5 python3-pyqt5.qtwebengine chromium xinit xserver-xorg xauth x11-xserver-utils libxcb-cursor0 pulseaudio-utils pipewire pipewire-pulse wireplumber dbus-user-session wmctrl xdotool openbox network-manager git flatpak ca-certificates gnupg
+sudo apt install -y python3 python3-pip python3-venv python3-pyqt5 python3-pyqt5.qtwebengine chromium xinit xserver-xorg xauth x11-xserver-utils libxcb-cursor0 pulseaudio-utils pipewire pipewire-pulse wireplumber dbus-user-session wmctrl xdotool openbox network-manager polkitd pkexec git flatpak curl ca-certificates gnupg
+
+echo "Installing Brave browser..."
+if curl -fsS https://dl.brave.com/install.sh | sudo sh; then
+  echo "✓ Brave browser installed"
+else
+  echo "⚠ Warning: Brave browser install failed; keeping Chromium as the browser fallback."
+fi
 
 # Step 2: Prepare runtime user
 echo "[2/8] Preparing runtime user '$RUNTIME_USER'..."
-sudo usermod -aG video,audio,input,plugdev "$RUNTIME_USER"
-echo "✓ Added $RUNTIME_USER to video/audio/input/plugdev groups"
+sudo usermod -aG video,audio,input,plugdev,netdev "$RUNTIME_USER"
+echo "✓ Added $RUNTIME_USER to video/audio/input/plugdev/netdev groups"
+
+echo "Installing NetworkManager polkit rule for local LinuxTV users..."
+sudo tee /etc/polkit-1/rules.d/49-linuxtv-networkmanager.rules > /dev/null <<'EOF'
+polkit.addRule(function(action, subject) {
+  if (subject.local &&
+      subject.active &&
+      subject.isInGroup("netdev")) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 ||
+        action.id.indexOf("org.freedesktop.timedate1.") === 0) {
+      return polkit.Result.YES;
+    }
+  }
+});
+EOF
+sudo chmod 0644 /etc/polkit-1/rules.d/49-linuxtv-networkmanager.rules
+echo "✓ Installed polkit rule for NetworkManager and time sync"
+
+sudo systemctl enable systemd-timesyncd 2>/dev/null || true
+sudo systemctl restart systemd-timesyncd 2>/dev/null || true
+echo "✓ Enabled automatic network time sync"
 
 # Step 3: Create directory structure for runtime user
 echo "[3/8] Setting up LinuxTV directory for $RUNTIME_USER..."
