@@ -6,7 +6,7 @@ LINUXTV_USER="linuxtv"
 
 if ! id -u "$LINUXTV_USER" >/dev/null 2>&1; then
   useradd -m -s /bin/bash -G sudo,video,audio,input,plugdev,netdev "$LINUXTV_USER"
-  echo "${LINUXTV_USER}:linuxtvbyguru" | chpasswd
+  echo "${LINUXTV_USER}:linuxtv" | chpasswd
 fi
 
 install -d -m 0755 /etc/polkit-1/rules.d
@@ -31,7 +31,14 @@ apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev
 python3 -m venv --system-site-packages "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
 
-curl -fsS https://dl.brave.com/install.sh | sh
+# Install Brave browser manually to ensure GPG key is properly set up
+if [ ! -f /usr/share/keyrings/brave-browser-archive-keyring.gpg ]; then
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSLo /etc/apt/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg arch=amd64] https://brave-browser-apt-release.s3.brave.com/ stable main" > /etc/apt/sources.list.d/brave-browser-release.list
+  apt-get update
+fi
+apt-get install -y brave-browser
 
 flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak install -y --system flathub com.stremio.Stremio
@@ -85,6 +92,11 @@ chown "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.xinitrc"
 mkdir -p "/home/${LINUXTV_USER}/.config/linuxtv"
 cp "$INSTALL_DIR/linuxtvdesktop/config.yaml" "/home/${LINUXTV_USER}/.config/linuxtv/config.yaml" 2>/dev/null || true
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.config"
+
+# Configure Plymouth splash theme
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+  plymouth-set-default-theme -R linuxtv || true
+fi
 
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF

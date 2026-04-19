@@ -19,6 +19,17 @@ elif ! command -v rsync >/dev/null 2>&1; then
   apt-get install -y rsync
 fi
 
+# Clean up previous build - properly unmount chroot filesystems first
+if [ -d "$BUILD_DIR/chroot" ]; then
+  echo "Cleaning up previous build..."
+  # Unmount proc, sys, and dev if still mounted
+  for mount_point in "$BUILD_DIR/chroot/proc" "$BUILD_DIR/chroot/sys" "$BUILD_DIR/chroot/dev" "$BUILD_DIR/chroot/dev/pts"; do
+    if mountpoint -q "$mount_point" 2>/dev/null; then
+      umount "$mount_point" 2>/dev/null || umount -l "$mount_point" 2>/dev/null || true
+    fi
+  done
+fi
+
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
@@ -52,14 +63,13 @@ lb clean --purge 2>/dev/null || true
 lb config \
   --distribution trixie \
   --archive-areas "main contrib non-free non-free-firmware" \
-  --debian-installer live \
-  --debian-installer-gui false \
   --binary-images iso-hybrid \
   --iso-application "LinuxTV" \
   --iso-volume "LinuxTV" \
-  --bootappend-live "boot=live components quiet splash" \
+  --bootappend-live "boot=live components quiet splash persistence" \
   --linux-flavours amd64 \
-  --apt-recommends false
+  --apt-recommends false \
+  --debian-installer-gui false
 
 lb build 2>&1 | tee "$OUTPUT_LOG"
 

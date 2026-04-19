@@ -57,6 +57,15 @@ flatpak
 
 # Networking
 network-manager
+systemd-timesyncd
 wpasupplicant
 wireless-regdb
 rfkill
+
+# Hardware firmware
+firmware-linux-nonfree
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-amd-graphics
+firmware-misc-nonfree
