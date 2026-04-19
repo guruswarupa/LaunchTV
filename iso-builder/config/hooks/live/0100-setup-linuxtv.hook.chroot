@@ -98,8 +98,8 @@ if command -v plymouth-set-default-theme >/dev/null 2>&1; then
   plymouth-set-default-theme -R linuxtv || true
 fi
 
-mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
+mkdir -p /etc/systemd/system/getty@.service.d
+cat > /etc/systemd/system/getty@.service.d/override.conf <<EOF
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin ${LINUXTV_USER} --noclear %I \$TERM
