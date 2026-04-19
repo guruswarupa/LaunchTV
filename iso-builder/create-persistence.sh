@@ -55,34 +55,59 @@ echo "Analyzing current partition layout..."
 DISK_SECTORS=$(blockdev --getsz "$USB_DEVICE")
 echo "Disk size: $DISK_SECTORS sectors"
 
-# Find where the last partition ends
-LAST_SECTOR=$(sfdisk -l "$USB_DEVICE" | tail -n +2 | awk '{print $3}' | sort -n | tail -1)
+# Get the end of the last partition using lsblk (much more robust than sfdisk/parted for hybrid ISOs)
+# START is in 512-byte sectors, SIZE is in bytes.
+LAST_SECTOR=$(lsblk -nplb -o TYPE,START,SIZE "$USB_DEVICE" | awk -v dev="$USB_DEVICE" '
+    $1 == "part" {
+        start = $2;
+        size = $3;
+        end = start + (size / 512);
+        if (end > max_end) max_end = end;
+    }
+    END { print max_end }
+')
 
-if [ -z "$LAST_SECTOR" ]; then
-    echo "Error: Could not determine partition layout"
+if [ -z "$LAST_SECTOR" ] || [ "$LAST_SECTOR" -eq 0 ]; then
+    echo "Error: Could not determine partition layout. Sometimes the kernel doesn't see partitions on hybrid ISOs."
+    echo "Try unplugging and replugging the USB drive, then run this script again."
     exit 1
 fi
 
 echo "Last partition ends at sector: $LAST_SECTOR"
 
-# Calculate start of new partition (1MB alignment)
+# Calculate start of new partition (1MB alignment for performance)
 NEW_START=$(( (LAST_SECTOR / 2048 + 1) * 2048 ))
 echo "New partition will start at sector: $NEW_START"
 
 echo ""
 echo "Creating persistence partition..."
 
-# Create new partition using the free space
-echo "${NEW_START} " | sfdisk --append "$USB_DEVICE"
+# Use fdisk to create the partition. It is more lenient with hybrid ISOs than sfdisk or parted.
+(
+echo n
+echo p
+echo 3
+echo "$NEW_START"
+echo ""
+echo w
+) | fdisk "$USB_DEVICE" || echo "Note: fdisk finished with some warnings (normal for hybrid ISOs)"
 
-# Get the new partition name (should be the last partition)
-PARTITION=$(lsblk -n -o NAME "$USB_DEVICE" | tail -1)
-if [[ "$PARTITION" != *"/dev/"* ]]; then
-    PARTITION="/dev/$PARTITION"
+# We might need to wait for OS to recognize new partition
+echo "Waiting for kernel to recognize new partition..."
+sleep 5
+partprobe "$USB_DEVICE" 2>/dev/null || true
+sleep 3
+
+# Get the new partition name
+PARTITION=$(lsblk -lpn -o NAME,START "$USB_DEVICE" | grep -w "$NEW_START" | awk '{print $1}')
+
+if [ -z "$PARTITION" ]; then
+    # Fallback: get the last partition
+    PARTITION=$(lsblk -lpn -o NAME "$USB_DEVICE" | grep -v "^${USB_DEVICE}$" | tail -1)
 fi
 
 if [ ! -b "$PARTITION" ]; then
-    echo "Error: New partition was not created"
+    echo "Error: New partition was not created or not recognized"
     echo "Please re-plug the USB drive and try again"
     exit 1
 fi

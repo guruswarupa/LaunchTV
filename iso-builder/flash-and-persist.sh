@@ -74,60 +74,74 @@ sleep 2
 echo ""
 echo "Analyzing new partition layout..."
 
-# Get the size of the disk in sectors
-DISK_SECTORS=$(blockdev --getsz "$USB_DEVICE")
-echo "Disk size: $DISK_SECTORS sectors"
+# We might need to wait for OS to recognize new partition table
+sleep 3
+partprobe "$USB_DEVICE" 2>/dev/null || true
+sleep 2
 
-# Find where the last partition ends
-LAST_SECTOR=$(sfdisk -l "$USB_DEVICE" | grep -v '^Disk' | grep -v '^Units' | grep -v '^Sector' | grep '^/dev/' | awk '{print $3}' | sort -n | tail -1)
-
-if [ -z "$LAST_SECTOR" ]; then
-    echo "Error: Could not determine partition layout. Sometimes this happens right after dd."
-    echo "Trying alternative method..."
-    LAST_SECTOR=$(parted "$USB_DEVICE" unit s print -sm | grep -v 'Error' | tail -n 1 | awk -F: '{print $3}' | tr -d 's')
-    if [ -z "$LAST_SECTOR" ]; then
-        echo "Still failed. You may need to run create-persistence.sh separately after unplugging and replugging the drive."
-        exit 1
-    fi
-fi
-
-# parted might return e.g. "1234567" string. sfdisk gives sector start + length, which we need to be careful with.
-# actually, let's use parted for reliability if sfdisk output format changed, or just use the logic from the original script
-# Let's revert to original logic but be careful about header lines
-LAST_SECTOR=$(sfdisk -l "$USB_DEVICE" | grep '^/dev/' | grep -v "$USB_DEVICE:" | awk '{
-    for(i=1;i<=NF;i++) {
-        if ($i ~ /^[0-9]+$/ && $(i-1) ~ /^[0-9]+$/ && $(i-2) == "*") { print $(i-1) + $i - 1; break }
-        if ($i ~ /^[0-9]+$/ && $(i-1) ~ /^[0-9]+$/ && !($(i-2) ~ /^[0-9]+$/)) { print $i; break}
+# Get the end of the last partition using lsblk (much more robust than sfdisk/parted for hybrid ISOs)
+# START is in 512-byte sectors, SIZE is in bytes.
+LAST_SECTOR=$(lsblk -nplb -o TYPE,START,SIZE "$USB_DEVICE" | awk -v dev="$USB_DEVICE" '
+    $1 == "part" {
+        start = $2;
+        size = $3;
+        end = start + (size / 512);
+        if (end > max_end) max_end = end;
     }
-}' | sort -n | tail -1)
+    END { print max_end }
+')
 
-# A more robust way to get the end sector of the last partition
-LAST_SECTOR=$(parted -m "$USB_DEVICE" unit s print | tail -n 1 | awk -F: '{print $3}' | tr -d 's')
+if [ -z "$LAST_SECTOR" ] || [ "$LAST_SECTOR" -eq 0 ]; then
+    echo "Warning: Could not determine partition layout via lsblk. Trying fallback..."
+    # Fallback to ISO file size if partitions aren't visible yet
+    ISO_SIZE=$(stat -c%s "$ISO_FILE")
+    LAST_SECTOR=$((ISO_SIZE / 512))
+fi
 
 echo "Last partition ends at sector: $LAST_SECTOR"
 
-# Calculate start of new partition (1MB alignment)
-# 1MB = 2048 sectors (assuming 512 byte sectors)
+# Calculate start of new partition (1MB alignment for performance)
+# 1MB = 2048 sectors
 NEW_START=$(( (LAST_SECTOR / 2048 + 1) * 2048 ))
 echo "New partition will start at sector: $NEW_START"
 
 echo ""
 echo "Creating persistence partition..."
 
-# Create new partition using the free space
-echo "${NEW_START} " | sfdisk --append "$USB_DEVICE"
+# Use fdisk to create the partition. It is more lenient with hybrid ISOs than sfdisk or parted.
+# n: new partition
+# p: primary
+# 3: partition number 3 (1 & 2 are used by ISO)
+# $NEW_START: start sector
+# <empty>: default to end of disk
+# w: write Changes
+(
+echo n
+echo p
+echo 3
+echo "$NEW_START"
+echo ""
+echo w
+) | fdisk "$USB_DEVICE" || echo "Note: fdisk finished with some warnings (normal for hybrid ISOs)"
 
 # We might need to wait for OS to recognize new partition
-sleep 3
+echo "Waiting for kernel to recognize new partition..."
+sleep 5
 partprobe "$USB_DEVICE" 2>/dev/null || true
-sleep 2
+sleep 3
 
-# Get the new partition name (should be the last partition)
-PARTITION=$(lsblk -lpn -o NAME "$USB_DEVICE" | tail -1)
+# Get the new partition name
+# It should be the one starting at NEW_START or just the last one
+PARTITION=$(lsblk -lpn -o NAME,START "$USB_DEVICE" | grep -w "$NEW_START" | awk '{print $1}')
+
+if [ -z "$PARTITION" ]; then
+    # Fallback: get the last partition
+    PARTITION=$(lsblk -lpn -o NAME "$USB_DEVICE" | grep -v "^${USB_DEVICE}$" | tail -1)
+fi
 
 if [ ! -b "$PARTITION" ]; then
-    echo "Error: New partition was not created"
-    echo "Please re-plug the USB drive and run create-persistence.sh manually"
+    echo "Error: New partition was not created or not recognized."
+    echo "Please unplug and re-plug the USB drive, then run create-persistence.sh manually."
     exit 1
 fi
 
