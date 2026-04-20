@@ -62,6 +62,10 @@ wpasupplicant
 wireless-regdb
 rfkill
 
+# Bluetooth
+bluez
+bluez-tools
+
 # Hardware firmware
 firmware-linux-nonfree
 firmware-iwlwifi
