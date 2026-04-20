@@ -42,6 +42,8 @@ export interface RemoteRepository {
   sendPointerEvent(event: PointerEventType, payload?: { dx?: number; dy?: number }): void;
   sendSpecialKey(key: SpecialKey): void;
   sendText(text: string): void;
+  addApp(app: { type: string; name: string; command?: string; url?: string }): void;
+  removeApp(appId: string): void;
 }
 
 type RepositoryListener = (update: Partial<RepositoryState>) => void;
@@ -127,6 +129,20 @@ export class DemoRepository implements RemoteRepository {
     this.emit({
       lastAction: 'Typed text',
       lastMessage: `Demo text sent: ${text}`,
+    });
+  }
+
+  addApp(app: { type: string; name: string; command?: string; url?: string }) {
+    this.emit({
+      lastAction: 'Add App',
+      lastMessage: `Demo: Added app "${app.name}"`,
+    });
+  }
+
+  removeApp(appId: string) {
+    this.emit({
+      lastAction: 'Remove App',
+      lastMessage: `Demo: Removed app ${appId}`,
     });
   }
 }
@@ -384,6 +400,24 @@ export class RealServerRepository implements RemoteRepository {
 
   sendText(text: string) {
     this.sendPayload({ type: 'text', text }, 'Typed text');
+  }
+
+  addApp(app: { type: string; name: string; command?: string; url?: string }) {
+    const payload = {
+      type: 'add_app',
+      kind: app.type,
+      name: app.name,
+      ...(app.type === 'native' ? { command: app.command } : { url: app.url }),
+    };
+    this.sendPayload(payload, 'Add App');
+  }
+
+  removeApp(appId: string) {
+    const payload = {
+      type: 'remove_app',
+      id: appId,
+    };
+    this.sendPayload(payload, 'Remove App');
   }
 
   private async authenticate() {

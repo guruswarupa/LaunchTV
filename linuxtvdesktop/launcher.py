@@ -640,7 +640,13 @@ def load_config(path: Path):
 def normalize_config(config):
     normalized = dict(DEFAULT_CONFIG)
     if isinstance(config, dict):
-        normalized.update(config)
+        # Deep merge nested dicts instead of shallow replace
+        for key, value in config.items():
+            if key in normalized and isinstance(normalized[key], dict) and isinstance(value, dict):
+                # Merge nested dicts, preserving defaults
+                normalized[key] = {**normalized[key], **value}
+            else:
+                normalized[key] = value
 
     native_apps = normalized.get("native_apps")
     web_apps = normalized.get("web_apps")
@@ -1489,7 +1495,7 @@ class TileButton(QPushButton):
         self._ripple_radius = 0
         self.ripple_pos = None
         self.ripple_opacity = 0
-        self.ripple_anim = None
+        self.ripple_timer = None
 
     def _get_ripple_radius(self):
         return self._ripple_radius
@@ -1506,15 +1512,26 @@ class TileButton(QPushButton):
         self.ripple_radius = 0
         self.ripple_opacity = 0.3
         
-        # Create ripple animation
-        if self.ripple_anim:
-            self.ripple_anim.stop()
+        # Create ripple animation using QTimer (QPropertyAnimation doesn't work with Python properties)
+        if self.ripple_timer:
+            self.ripple_timer.stop()
         
-        self.ripple_anim = QPropertyAnimation(self, b"ripple_radius")
-        self.ripple_anim.setDuration(400)
-        self.ripple_anim.setStartValue(0)
-        self.ripple_anim.setEndValue(max(self.width(), self.height()) * 1.5)
-        self.ripple_anim.start()
+        self.ripple_timer = QTimer(self)
+        self.ripple_timer.setSingleShot(False)
+        target_radius = max(self.width(), self.height()) * 1.5
+        duration_ms = 400
+        interval_ms = 16  # ~60 FPS
+        step = target_radius / (duration_ms / interval_ms)
+        
+        def animate_ripple():
+            if self.ripple_radius >= target_radius:
+                self.ripple_timer.stop()
+                self.ripple_timer = None
+            else:
+                self.ripple_radius = min(self.ripple_radius + step, target_radius)
+        
+        self.ripple_timer.timeout.connect(animate_ripple)
+        self.ripple_timer.start(interval_ms)
         
         super().mousePressEvent(event)
         
@@ -1656,7 +1673,14 @@ class AppCard(QWidget):
         """Restore normal shadow on leave"""
         try:
             if hasattr(self, 'shadow_effect') and self.shadow_effect is not None:
-                metrics = self.tile_button.parent().parent().ui_metrics if hasattr(self.tile_button.parent().parent(), 'ui_metrics') else {}
+                # Safely traverse parent chain to get ui_metrics
+                metrics = {}
+                parent = self.tile_button.parent()
+                if parent and hasattr(parent, 'parent'):
+                    grandparent = parent.parent()
+                    if grandparent and hasattr(grandparent, 'ui_metrics'):
+                        metrics = grandparent.ui_metrics
+                
                 shadow_radius = metrics.get("card_shadow_radius", 10)
                 self.shadow_effect.setBlurRadius(shadow_radius)
                 self.shadow_effect.setYOffset(4)
@@ -3705,36 +3729,6 @@ class LauncherWindow(QMainWindow):
         
         logging.warning("App not found: %s", app_id)
 
-    def add_native_app(self, name: str, command: str):
-        """Add a native app to config and save it"""
-        native_apps = self.config.get("native_apps", [])
-        native_apps.append({
-            "name": name,
-            "cmd": command
-        })
-        self.config["native_apps"] = native_apps
-        save_config(self.config_path, self.config)
-        
-        logging.info("Added native app: %s (%s)", name, command)
-        
-        # Refresh tiles immediately
-        self.populate_tiles()
-
-    def add_web_app(self, name: str, url: str):
-        """Add a web app to config and save it"""
-        web_apps = self.config.get("web_apps", [])
-        web_apps.append({
-            "name": name,
-            "url": url
-        })
-        self.config["web_apps"] = web_apps
-        save_config(self.config_path, self.config)
-        
-        logging.info("Added web app: %s (%s)", name, url)
-        
-        # Refresh tiles immediately
-        self.populate_tiles()
-
     def remove_app_by_id(self, app_id: str):
         """Remove an app by its ID from config"""
         app_id_normalized = app_id.lower().replace(" ", "_")
@@ -3867,7 +3861,7 @@ class LauncherWindow(QMainWindow):
         if entry_type == "Application":
             self.add_native_app(name, value)
             return
-        self.add_web_service(name, value)
+        self.add_web_app(name, value)
 
     def prompt_edit_entry(self, kind: str, app):
         type_text = "Application" if kind == "native" else "Website"
@@ -4317,7 +4311,7 @@ class LauncherWindow(QMainWindow):
                         check=False,
                         timeout=10
                     )
-                    time.sleep(3)
+                    time.sleep(2)  # Reduced from 3s
             
             # Start interactive bluetoothctl session
             bt_proc = subprocess.Popen(
@@ -4355,65 +4349,65 @@ class LauncherWindow(QMainWindow):
             if bt_proc.stdin:
                 bt_proc.stdin.write("power on\n")
                 bt_proc.stdin.flush()
-                time.sleep(4)  # Give it more time to power on
+                time.sleep(2)  # Reduced from 4s
             
             # Verify power on worked by checking show output
             if bt_proc.stdin:
                 bt_proc.stdin.write("show\n")
                 bt_proc.stdin.flush()
-                time.sleep(2)
+                time.sleep(1)  # Reduced from 2s
             
             # List controllers to confirm
             if bt_proc.stdin:
                 bt_proc.stdin.write("list\n")
                 bt_proc.stdin.flush()
-                time.sleep(1)
+                time.sleep(0.5)  # Reduced from 1s
             
             # Enable the controller (in case it was disabled)
             if bt_proc.stdin:
                 bt_proc.stdin.write("enable\n")
                 bt_proc.stdin.flush()
-                time.sleep(2)
+                time.sleep(1)  # Reduced from 2s
             
             # Make controller discoverable and pairable
             if bt_proc.stdin:
                 bt_proc.stdin.write("discoverable on\n")
                 bt_proc.stdin.flush()
-                time.sleep(1)
+                time.sleep(0.5)  # Reduced from 1s
                 
                 bt_proc.stdin.write("pairable on\n")
                 bt_proc.stdin.flush()
-                time.sleep(1)
+                time.sleep(0.5)  # Reduced from 1s
             
             # Enable agent
             if bt_proc.stdin:
                 bt_proc.stdin.write("agent on\n")
                 bt_proc.stdin.flush()
-                time.sleep(1)
+                time.sleep(0.5)  # Reduced from 1s
                 
                 bt_proc.stdin.write("default-agent\n")
                 bt_proc.stdin.flush()
-                time.sleep(1)
+                time.sleep(0.5)  # Reduced from 1s
             
             # Start scanning - this will discover ALL nearby devices
             if bt_proc.stdin:
                 bt_proc.stdin.write("scan on\n")
                 bt_proc.stdin.flush()
             
-            # Wait for scan to discover devices (15 seconds for thorough scan)
-            time.sleep(15)
+            # Wait for scan to discover devices (reduced from 15s to 8s)
+            time.sleep(8)
             
             # Stop scanning
             if bt_proc.stdin:
                 bt_proc.stdin.write("scan off\n")
                 bt_proc.stdin.flush()
-                time.sleep(2)
+                time.sleep(1)  # Reduced from 2s
             
             # Get all discovered devices
             if bt_proc.stdin:
                 bt_proc.stdin.write("devices\n")
                 bt_proc.stdin.flush()
-                time.sleep(2)
+                time.sleep(1)  # Reduced from 2s
             
             # Get the output
             bt_proc.terminate()
@@ -4556,14 +4550,15 @@ class LauncherWindow(QMainWindow):
             )
             if "Connected: yes" in info_res.stdout:
                 return True, f"Connected to {mac}.", mac
+            
+            # If we reach here, connection failed but result is defined
+            message = (result.stderr or result.stdout or "Unknown error").strip()
+            return False, f"Could not connect to {mac}: {message[-100:]}", ""
                 
         except Exception as exc:
             import logging
             logging.exception("Failed to connect to Bluetooth")
             return False, f"Could not connect to {mac}: {exc}", ""
-
-        message = (result.stderr or result.stdout or "Unknown error").strip()
-        return False, f"Could not connect to {mac}: {message[-100:]}", ""
 
     def update_from_github(self):
         git = shutil.which("git")
@@ -4653,7 +4648,7 @@ class LauncherWindow(QMainWindow):
         self.focus_entry_tile("native", native_apps[-1])
         QMessageBox.information(self, "Added", f"{name.strip()} is now available in Apps.")
 
-    def add_web_service(self, name: str, url: str):
+    def add_web_app(self, name: str, url: str):
         normalized_url = self.normalize_url(url)
         web_apps = self.config.setdefault("web_apps", [])
         web_apps.append({"name": name.strip(), "url": normalized_url, "icon": ""})

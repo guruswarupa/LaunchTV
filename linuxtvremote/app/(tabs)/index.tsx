@@ -87,6 +87,12 @@ const createSystemId = () => `${Date.now()}-${Math.random().toString(36).slice(2
 const buildSystemName = (name: string, ipAddress: string) => name.trim() || ipAddress.trim();
 
 const encodeBase64 = (value: string) => {
+  // Use global btoa if available (web), otherwise use manual encoding for React Native
+  if (typeof globalThis.btoa !== 'undefined') {
+    return globalThis.btoa(value);
+  }
+  
+  // Fallback for React Native: manual base64 encoding
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   let output = '';
 
@@ -160,6 +166,7 @@ export default function RemoteScreen() {
   const [kodiPassword, setKodiPassword] = useState('');
   const [savedSystems, setSavedSystems] = useState<SavedSystem[]>([]);
   const [activeSystemId, setActiveSystemId] = useState<string | null>(null);
+  const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
   const [editingSystemId, setEditingSystemId] = useState<string | null>(null);
   const [hasSavedSetup, setHasSavedSetup] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -748,8 +755,12 @@ export default function RemoteScreen() {
     };
 
     if (repositoryRef.current) {
-      // Access internal send method
-      (repositoryRef.current as any).sendPayload?.(payload, 'Add App');
+      repositoryRef.current.addApp({
+        type: newAppType,
+        name: newAppName.trim(),
+        command: newAppType === 'native' ? newAppCommand.trim() : undefined,
+        url: newAppType === 'web' ? newAppUrl.trim() : undefined,
+      });
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     
@@ -775,14 +786,8 @@ export default function RemoteScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            const payload = {
-              type: 'remove_app',
-              id: appId,
-            };
-
-            // Send raw JSON message directly
             if (repositoryRef.current) {
-              (repositoryRef.current as any).sendPayload?.(payload, 'Remove App');
+              repositoryRef.current.removeApp(appId);
             }
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             
@@ -808,15 +813,9 @@ export default function RemoteScreen() {
   };
 
   const toggleMute = () => {
-    if (isMuted) {
-      // Unmute - send volume up to restore
-      sendAction('VOLUME_UP');
-      setIsMuted(false);
-    } else {
-      // Mute
-      sendAction('MUTE');
-      setIsMuted(true);
-    }
+    // Server handles MUTE as a toggle, so just send MUTE action
+    sendAction('MUTE');
+    setIsMuted(!isMuted);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
@@ -1027,7 +1026,6 @@ export default function RemoteScreen() {
   }, [activeTab, activeSystem?.id, repositoryState.isDemoMode]);
 
   const showLoginScreen = !hasSavedSetup;
-  const activeSystem = savedSystems.find((system) => system.id === activeSystemId) ?? null;
   const normalizedKodiSearchQuery = kodiSearchQuery.trim().toLowerCase();
   const filteredKodiGroups = normalizedKodiSearchQuery
     ? kodiGroups.filter((group) => group.label.toLowerCase().includes(normalizedKodiSearchQuery))
