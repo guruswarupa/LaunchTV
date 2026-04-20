@@ -2789,6 +2789,10 @@ class LauncherWindow(QMainWindow):
         self.auto_launch_countdown_timer.timeout.connect(self.update_auto_launch_status)
         self.auto_launch_paused = False
 
+        self.ip_update_timer = QTimer(self)
+        self.ip_update_timer.setInterval(1000)
+        self.ip_update_timer.timeout.connect(self.update_ip_label)
+
         self.ws_server = WebSocketControlServer(self)
         self.ws_server.start()
 
@@ -3067,11 +3071,14 @@ class LauncherWindow(QMainWindow):
         else:
             ip_text = f"Ethernet • {ip_address}"
         
-        ip_label = QLabel(ip_text)
-        ip_label.setObjectName("ipLabel")
-        ip_label.setFont(QFont("Sans Serif", max(13, self.ui_metrics["settings_button_font"] - 5)))
-        ip_label.setStyleSheet("color: #8b949e; padding-right: 8px;")
-        hero_top_row.addWidget(ip_label)
+        self.ip_label = QLabel(ip_text)
+        self.ip_label.setObjectName("ipLabel")
+        self.ip_label.setFont(QFont("Sans Serif", max(13, self.ui_metrics["settings_button_font"] - 5)))
+        self.ip_label.setStyleSheet("color: #8b949e; padding-right: 8px;")
+        hero_top_row.addWidget(self.ip_label)
+        
+        # Start the IP update timer
+        self.ip_update_timer.start()
 
         # Network button
         network_button = QToolButton()
@@ -5406,6 +5413,28 @@ class LauncherWindow(QMainWindow):
             self.auto_launch_cancel_button.setText("Cancel Auto-Open")
         self.auto_launch_status_label.show()
         self.auto_launch_cancel_button.show()
+
+    def update_ip_label(self):
+        """Update the IP label with current network info and time."""
+        if not hasattr(self, 'ip_label'):
+            return
+        
+        ip_address = self.get_ip_address()
+        wifi_ssid = self.get_wifi_ssid()
+        is_wifi = self.is_wifi_connection()
+        
+        # Get current time
+        current_time = time.strftime("%H:%M:%S")
+        
+        if is_wifi:
+            if wifi_ssid:
+                ip_text = f"WiFi: {wifi_ssid} • {ip_address} • {current_time}"
+            else:
+                ip_text = f"WiFi • {ip_address} • {current_time}"
+        else:
+            ip_text = f"Ethernet • {ip_address} • {current_time}"
+        
+        self.ip_label.setText(ip_text)
 
     def navigate(self, direction: str):
         if not self.tile_rows:
