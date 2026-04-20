@@ -15,6 +15,11 @@ x11-xserver-utils
 openbox
 libxcb-cursor0
 
+# Fonts for icons and symbols
+fonts-dejavu-core
+fonts-symbola
+fonts-noto-color-emoji
+
 # Python and Qt
 python3
 python3-pip
