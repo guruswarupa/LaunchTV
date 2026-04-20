@@ -75,9 +75,14 @@ def _load_qt_binding():
                 qt_gui.QKeyEvent,
                 qt_gui.QPixmap,
                 qt_gui.QWheelEvent,
+                qt_gui.QColor,
+                qt_gui.QPainter,
+                qt_gui.QLinearGradient,
                 qt_widgets.QApplication,
                 qt_widgets.QComboBox,
                 qt_widgets.QDialog,
+                qt_widgets.QGraphicsDropShadowEffect,
+                qt_widgets.QGraphicsOpacityEffect,
                 qt_widgets.QGridLayout,
                 qt_widgets.QHBoxLayout,
                 qt_widgets.QLabel,
@@ -113,9 +118,14 @@ def _load_qt_binding():
     QKeyEvent,
     QPixmap,
     QWheelEvent,
+    QColor,
+    QPainter,
+    QLinearGradient,
     QApplication,
     QComboBox,
     QDialog,
+    QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -208,49 +218,49 @@ def dialog_metrics():
     if compact:
         return {
             "compact": True,
-            "add_width": 460,
-            "confirm_width": 420,
-            "settings_width": 560,
-            "settings_height": 610,
-            "dialog_margin_x": 22,
-            "dialog_margin_y": 20,
-            "dialog_spacing": 12,
-            "title_font": 20,
-            "section_font": 16,
-            "subtitle_font": 12,
-            "helper_font": 11,
-            "input_min_height": 40,
-            "nav_spacing": 8,
-            "status_padding_v": 10,
-            "status_padding_h": 12,
-            "field_font_css": 13,
-            "button_font_css": 13,
-            "button_min_width": 96,
-            "button_padding_v": 11,
-            "button_padding_h": 16,
+            "add_width": 520,
+            "confirm_width": 460,
+            "settings_width": 920,
+            "settings_height": 650,
+            "dialog_margin_x": 24,
+            "dialog_margin_y": 22,
+            "dialog_spacing": 14,
+            "title_font": 22,
+            "section_font": 17,
+            "subtitle_font": 13,
+            "helper_font": 12,
+            "input_min_height": 42,
+            "nav_spacing": 12,
+            "status_padding_v": 11,
+            "status_padding_h": 14,
+            "field_font_css": 14,
+            "button_font_css": 14,
+            "button_min_width": 104,
+            "button_padding_v": 12,
+            "button_padding_h": 18,
         }
     return {
         "compact": False,
-        "add_width": 560,
-        "confirm_width": 500,
-        "settings_width": 640,
-        "settings_height": 700,
-        "dialog_margin_x": 28,
-        "dialog_margin_y": 24,
-        "dialog_spacing": 14,
-        "title_font": 24,
-        "section_font": 18,
-        "subtitle_font": 14,
-        "helper_font": 13,
-        "input_min_height": 44,
-        "nav_spacing": 10,
-        "status_padding_v": 12,
-        "status_padding_h": 14,
-        "field_font_css": 15,
-        "button_font_css": 15,
-        "button_min_width": 110,
-        "button_padding_v": 13,
-        "button_padding_h": 20,
+        "add_width": 620,
+        "confirm_width": 540,
+        "settings_width": 1080,
+        "settings_height": 740,
+        "dialog_margin_x": 30,
+        "dialog_margin_y": 26,
+        "dialog_spacing": 16,
+        "title_font": 26,
+        "section_font": 20,
+        "subtitle_font": 15,
+        "helper_font": 14,
+        "input_min_height": 48,
+        "nav_spacing": 14,
+        "status_padding_v": 13,
+        "status_padding_h": 16,
+        "field_font_css": 16,
+        "button_font_css": 16,
+        "button_min_width": 120,
+        "button_padding_v": 14,
+        "button_padding_h": 22,
     }
 
 
@@ -258,122 +268,148 @@ def dialog_stylesheet(metrics=None):
     metrics = metrics or dialog_metrics()
     stylesheet = """
         QDialog {
-            background-color: #111418;
-            border: 1px solid #2a3139;
-            border-radius: 22px;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 rgba(22, 27, 34, 0.98), stop:1 rgba(13, 17, 23, 0.99));
+            border: 1px solid rgba(76, 83, 91, 0.5);
+            border-radius: 24px;
         }
         QLabel#dialogTitle {
-            color: #f7f9fb;
+            color: #f0f3f6;
         }
         QLabel#dialogSection {
-            color: #eef2f7;
+            color: #e6edf3;
             padding-top: 10px;
             font-weight: 700;
         }
         QLabel#dialogSubtitle {
-            color: #9aa7b4;
+            color: #8b949e;
         }
         QLabel#dialogFieldLabel {
-            color: #dbe3ec;
+            color: #c9d1d9;
             font-weight: 600;
             padding-top: 6px;
         }
         QLabel#dialogHelper {
-            color: #7e8b97;
+            color: #6e7681;
             padding-top: 4px;
         }
         QLabel#dialogStatus {
             color: #b7c4d1;
-            background-color: #171d24;
-            border: 1px solid #29323c;
-            border-radius: 12px;
+            background-color: rgba(22, 27, 34, 0.8);
+            border: 1px solid rgba(76, 83, 91, 0.4);
+            border-radius: 14px;
             padding: __STATUS_PADDING_V__px __STATUS_PADDING_H__px;
         }
         QLineEdit, QComboBox {
-            background-color: #0b0f13;
-            color: #edf2f7;
-            border: 1px solid #2b3641;
-            border-radius: 14px;
+            background-color: rgba(13, 17, 23, 0.9);
+            color: #e6edf3;
+            border: 1px solid rgba(76, 83, 91, 0.5);
+            border-radius: 16px;
             padding: __BUTTON_PADDING_V__px 16px;
             min-height: 24px;
             font-size: __FIELD_FONT__px;
         }
         QLineEdit:focus, QComboBox:focus {
-            border: 1px solid #33c3a0;
+            border: 1px solid #58a6ff;
         }
         QComboBox::drop-down {
             border: none;
             width: 28px;
         }
         QComboBox QAbstractItemView {
-            background-color: #141a21;
-            color: #edf2f7;
-            border: 1px solid #2b3641;
-            selection-background-color: #33c3a0;
-            selection-color: #09110f;
-            alternate-background-color: #10161d;
+            background-color: rgba(22, 27, 34, 0.98);
+            color: #e6edf3;
+            border: 1px solid rgba(76, 83, 91, 0.5);
+            selection-background-color: #58a6ff;
+            selection-color: #ffffff;
+            alternate-background-color: rgba(19, 24, 30, 0.95);
         }
         QComboBox QAbstractItemView::item {
-            background-color: #141a21;
-            color: #edf2f7;
+            background-color: rgba(22, 27, 34, 0.95);
+            color: #e6edf3;
             padding: 8px 10px;
         }
         QComboBox QAbstractItemView::item:selected {
-            background-color: #33c3a0;
-            color: #09110f;
+            background-color: #58a6ff;
+            color: #ffffff;
         }
         QComboBox QAbstractItemView::item:hover {
-            background-color: #1d2731;
-            color: #edf2f7;
+            background-color: rgba(48, 54, 61, 0.9);
+            color: #e6edf3;
         }
         QComboBox QLineEdit {
-            background-color: #0b0f13;
-            color: #edf2f7;
+            background-color: rgba(13, 17, 23, 0.9);
+            color: #e6edf3;
             border: none;
-            selection-background-color: #33c3a0;
-            selection-color: #09110f;
+            selection-background-color: #58a6ff;
+            selection-color: #ffffff;
         }
         QPushButton[tileVariant="dialogSecondary"] {
-            background-color: #1a222b;
-            color: #d9e2ec;
-            border: 1px solid #32404d;
-            border-radius: 14px;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
+            color: #c9d1d9;
+            border: 1px solid rgba(76, 83, 91, 0.5);
+            border-radius: 16px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
-            font-weight: 500;
+            font-weight: 600;
+        }
+        QPushButton[tileVariant="dialogSecondary"][sectionNav="true"] {
+            padding: 12px 20px;
+            min-width: 130px;
         }
         QPushButton[tileVariant="dialogSecondary"]:hover {
-            background-color: #212c37;
-            border: 1px solid #4a5d6f;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 rgba(58, 64, 71, 0.95), stop:1 rgba(48, 54, 61, 0.95));
+            border: 1px solid rgba(88, 96, 105, 0.7);
+        }
+        QPushButton[tileVariant="dialogSecondary"][sectionNav="true"]:hover {
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #58a6ff, stop:1 #1f6feb);
+            border: 1px solid #58a6ff;
+            color: #ffffff;
+        }
+        QPushButton[tileVariant="dialogSecondary"]:focus {
+            border: 2px solid #58a6ff;
+        }
+        QPushButton[tileVariant="dialogSecondary"][sectionNav="true"]:focus {
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 rgba(31, 111, 235, 0.3), stop:1 rgba(22, 87, 183, 0.35));
+            border: 2px solid #58a6ff;
+            color: #ffffff;
         }
         QPushButton[tileVariant="accent"] {
-            background-color: #33c3a0;
-            color: #08130f;
-            border: 1px solid #6be2c5;
-            border-radius: 14px;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #238636, stop:1 #1a7f37);
+            color: #ffffff;
+            border: 1px solid #2ea043;
+            border-radius: 16px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
             font-weight: 700;
         }
         QPushButton[tileVariant="accent"]:hover {
-            background-color: #4bd3b2;
-            border: 1px solid #8bead1;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2ea043, stop:1 #238636);
+            border: 1px solid #3fb950;
         }
         QPushButton[tileVariant="danger"] {
-            background-color: #d74f62;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #da3633, stop:1 #b62324);
             color: #ffffff;
-            border: 1px solid #f18493;
-            border-radius: 14px;
+            border: 1px solid #f85149;
+            border-radius: 16px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
             font-weight: 700;
         }
         QPushButton[tileVariant="danger"]:hover {
-            background-color: #e06375;
-            border: 1px solid #f5a0ac;
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #f85149, stop:1 #da3633);
+            border: 1px solid #f85149;
         }
     """
     replacements = {
@@ -1286,21 +1322,36 @@ class WebSocketControlServer(threading.Thread):
         try:
             self.loop.run_until_complete(self._run_server())
             self.loop.run_forever()
+        except RuntimeError:
+            # Event loop was stopped before future completed - this is expected during shutdown
+            pass
         finally:
+            # Ensure all tasks are cancelled before closing
+            if self.loop.is_running():
+                self.loop.stop()
+            pending = asyncio.all_tasks(self.loop)
+            if pending:
+                self.loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             self.loop.close()
 
     def stop(self):
-        if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
         self._stop_event.set()
+        if self.loop and self.loop.is_running():
+            # Close the server first
+            if self.server:
+                self.server.close()
+                self.loop.call_soon_threadsafe(lambda: self.loop.create_task(self.server.wait_closed()))
+            # Then stop the loop
+            self.loop.call_soon_threadsafe(self.loop.stop)
 
 
 class TileButton(QPushButton):
-    SHELL_PADDING_X = 14
-    SHELL_PADDING_Y = 14
+    SHELL_PADDING_X = 16
+    SHELL_PADDING_Y = 16
 
     def __init__(self, name: str, icon_path: str, tooltip: str = "", variant: str = "default", subtitle: str = "", metrics=None):
-        button_text = name if not subtitle else f"{name}\n{subtitle}"
+        # Show only app name, not subtitle
+        button_text = name
         super().__init__(button_text)
         metrics = metrics or {}
         self.variant = variant
@@ -1309,7 +1360,8 @@ class TileButton(QPushButton):
         tile_width = int(metrics.get("tile_width", 400))
         tile_height = int(metrics.get("tile_height", 230))
         tile_font = int(metrics.get("tile_font_size", 19))
-        tile_icon = int(metrics.get("tile_icon_size", 130))
+        # Reduce icon size by 20%
+        tile_icon = int(metrics.get("tile_icon_size", 130) * 0.8)
         self.base_size = QSize(tile_width, tile_height)
         self.shell_size = QSize(
             self.base_size.width() + (self.SHELL_PADDING_X * 2),
@@ -1323,7 +1375,7 @@ class TileButton(QPushButton):
         )
         self._focus_rect = QRect(0, 0, self.shell_size.width(), self.shell_size.height())
         self._anim = QPropertyAnimation(self, b"geometry", self)
-        self._anim.setDuration(250)
+        self._anim.setDuration(300)
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
         self.card_shell = None
         self.row_scroll = None
@@ -1343,6 +1395,67 @@ class TileButton(QPushButton):
         self.setProperty("hasSubtitle", "true" if subtitle else "false")
         self.setStyleSheet("")
         self.setGeometry(self._rest_rect)
+        
+        # Ripple effect attributes
+        self._ripple_radius = 0
+        self.ripple_pos = None
+        self.ripple_opacity = 0
+        self.ripple_anim = None
+
+    def _get_ripple_radius(self):
+        return self._ripple_radius
+        
+    def _set_ripple_radius(self, value):
+        self._ripple_radius = value
+        self.update()  # Trigger repaint
+        
+    ripple_radius = property(_get_ripple_radius, _set_ripple_radius)
+
+    def mousePressEvent(self, event):
+        """Start ripple animation on click"""
+        self.ripple_pos = event.pos()
+        self.ripple_radius = 0
+        self.ripple_opacity = 0.3
+        
+        # Create ripple animation
+        if self.ripple_anim:
+            self.ripple_anim.stop()
+        
+        self.ripple_anim = QPropertyAnimation(self, b"ripple_radius")
+        self.ripple_anim.setDuration(400)
+        self.ripple_anim.setStartValue(0)
+        self.ripple_anim.setEndValue(max(self.width(), self.height()) * 1.5)
+        self.ripple_anim.start()
+        
+        super().mousePressEvent(event)
+        
+    def paintEvent(self, event):
+        """Paint button with ripple effect"""
+        super().paintEvent(event)
+        
+        # Draw ripple if animating
+        if self.ripple_pos and self.ripple_opacity > 0:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            
+            ripple_color = QColor(255, 255, 255, int(self.ripple_opacity * 255))
+            painter.setBrush(ripple_color)
+            painter.setPen(Qt.NoPen)
+            
+            ripple_rect = QRect(
+                self.ripple_pos.x() - self.ripple_radius,
+                self.ripple_pos.y() - self.ripple_radius,
+                self.ripple_radius * 2,
+                self.ripple_radius * 2
+            )
+            painter.drawEllipse(ripple_rect)
+            painter.end()
+            
+            # Fade out ripple
+            self.ripple_opacity *= 0.95
+            if self.ripple_opacity < 0.01:
+                self.ripple_opacity = 0
+                self.ripple_pos = None
 
     def set_tile_icon(self, icon_path: str):
         if not icon_path:
@@ -1356,24 +1469,15 @@ class TileButton(QPushButton):
             self.setIcon(QIcon(str(path)))
 
     def update_geometry_targets(self, shell_rect: QRect):
+        # Make focus rect same as rest rect to prevent size changes
         self._focus_rect = QRect(0, 0, shell_rect.width(), shell_rect.height())
-        self._rest_rect = shell_rect.adjusted(
-            self.SHELL_PADDING_X,
-            self.SHELL_PADDING_Y,
-            -self.SHELL_PADDING_X,
-            -self.SHELL_PADDING_Y,
-        )
+        self._rest_rect = QRect(0, 0, shell_rect.width(), shell_rect.height())
         self._anim.stop()
         self.setGeometry(self._focus_rect if self.hasFocus() else self._rest_rect)
 
     def animate_focus(self, focused: bool):
-        end_rect = self._focus_rect if focused else self._rest_rect
-        if self.geometry() == end_rect:
-            return
-        self._anim.stop()
-        self._anim.setStartValue(self.geometry())
-        self._anim.setEndValue(end_rect)
-        self._anim.start()
+        """Animate focus state - now only visual, no size change"""
+        # No geometry animation needed since sizes are the same
         if focused and self.parentWidget():
             self.parentWidget().raise_()
 
@@ -1391,9 +1495,18 @@ class AppCard(QWidget):
         super().__init__()
         metrics = metrics or {}
         action_button_size = int(metrics.get("action_button_size", 44))
+        shadow_radius = int(metrics.get("card_shadow_radius", 10))
         self.setObjectName("appCardShell")
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(tile_button.shell_size)
+
+        # Add material design drop shadow
+        self.shadow_effect = QGraphicsDropShadowEffect(self)
+        self.shadow_effect.setBlurRadius(shadow_radius)
+        self.shadow_effect.setXOffset(0)
+        self.shadow_effect.setYOffset(4)
+        self.shadow_effect.setColor(QColor(0, 0, 0, 80))
+        self.setGraphicsEffect(self.shadow_effect)
 
         self.tile_button = tile_button
         self.tile_button.setParent(self)
@@ -1428,11 +1541,72 @@ class AppCard(QWidget):
 
     def resizeEvent(self, event):
         self.tile_button.update_geometry_targets(self.rect())
-        if self.edit_button is not None:
-            self.edit_button.move(self.width() - self.edit_button.width() - 16, 16)
-        if self.delete_button is not None:
-            self.delete_button.move(self.width() - self.delete_button.width() - 16, 68)
+        if self.edit_button is not None and self.delete_button is not None:
+            # Align both buttons horizontally at the top right
+            button_y = 12
+            button_spacing = 8
+            # Delete button on the right
+            self.delete_button.move(self.width() - self.delete_button.width() - 12, button_y)
+            # Edit button to the left of delete button
+            self.edit_button.move(self.width() - self.edit_button.width() - self.delete_button.width() - 12 - button_spacing, button_y)
         super().resizeEvent(event)
+
+    def enterEvent(self, event):
+        """Enhance shadow on hover"""
+        try:
+            if hasattr(self, 'shadow_effect') and self.shadow_effect is not None:
+                self.shadow_effect.setBlurRadius(self.shadow_effect.blurRadius() + 4)
+                self.shadow_effect.setYOffset(6)
+                self.shadow_effect.setColor(QColor(0, 0, 0, 100))
+        except RuntimeError:
+            # Shadow effect was deleted
+            pass
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """Restore normal shadow on leave"""
+        try:
+            if hasattr(self, 'shadow_effect') and self.shadow_effect is not None:
+                metrics = self.tile_button.parent().parent().ui_metrics if hasattr(self.tile_button.parent().parent(), 'ui_metrics') else {}
+                shadow_radius = metrics.get("card_shadow_radius", 10)
+                self.shadow_effect.setBlurRadius(shadow_radius)
+                self.shadow_effect.setYOffset(4)
+                self.shadow_effect.setColor(QColor(0, 0, 0, 80))
+        except RuntimeError:
+            # Shadow effect was deleted
+            pass
+        super().leaveEvent(event)
+
+
+class ParallaxBackground(QWidget):
+    """Custom widget with animated parallax gradient background"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.scroll_position = 0
+        self.setObjectName("parallaxBackground")
+        
+    def set_scroll_position(self, position):
+        """Update scroll position for gradient animation"""
+        self.scroll_position = position
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Create animated gradient based on scroll position
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        
+        # Subtle color shifts based on scroll
+        offset = (self.scroll_position % 1000) / 1000.0
+        
+        gradient.setColorAt(0.0, QColor(10, 14, 20))
+        gradient.setColorAt(0.3 + offset * 0.1, QColor(15, 20, 25))
+        gradient.setColorAt(0.7 + offset * 0.1, QColor(13, 17, 23))
+        gradient.setColorAt(1.0, QColor(10, 14, 20))
+        
+        painter.fillRect(self.rect(), gradient)
+        painter.end()
 
 
 class IconUpdateBridge(QObject):
@@ -1631,6 +1805,7 @@ class SettingsDialog(QDialog):
 
         nav_row = QHBoxLayout()
         nav_row.setSpacing(metrics["nav_spacing"])
+        nav_row.setContentsMargins(0, 8, 0, 8)
         for section_id, label in (
             ("auto", "Auto Open"),
             ("remote", "Remote Login"),
@@ -1641,6 +1816,8 @@ class SettingsDialog(QDialog):
             button = QPushButton(label)
             button.setProperty("tileVariant", "dialogSecondary")
             button.setProperty("sectionNav", "true")
+            button.setMinimumWidth(130)
+            button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             button.clicked.connect(lambda checked=False, current=section_id: self.show_section(current))
             nav_row.addWidget(button)
             self.section_buttons[section_id] = button
@@ -2212,77 +2389,81 @@ class LauncherWindow(QMainWindow):
         if compact:
             return {
                 "compact": True,
-                "main_margin_x": 24,
-                "main_margin_top": 20,
-                "main_margin_bottom": 20,
-                "main_spacing": 14,
-                "hero_margin_x": 22,
-                "hero_margin_y": 18,
-                "hero_spacing": 6,
+                "main_margin_x": 20,
+                "main_margin_top": 8,
+                "main_margin_bottom": 16,
+                "main_spacing": 12,
+                "hero_margin_x": 20,
+                "hero_margin_y": 12,
+                "hero_spacing": 12,
                 "hero_title_font": 28,
                 "hero_title_css": 28,
                 "settings_button_size": 40,
-                "settings_button_font": 16,
-                "section_heading_font": 18,
+                "settings_button_font": 18,
+                "section_heading_font": 20,
                 "footer_font": 12,
                 "status_font": 12,
-                "tile_stack_spacing": 14,
-                "row_label_css": 18,
-                "row_scroll_height": 212,
+                "tile_stack_spacing": 16,
+                "row_label_css": 22,
+                "row_scroll_height": 240,
                 "row_content_margin_x": 8,
                 "row_content_margin_y": 6,
-                "row_content_spacing": 18,
-                "tile_width": 280,
-                "tile_height": 152,
-                "tile_font_size": 14,
-                "tile_icon_size": 72,
-                "tile_font_css": 14,
+                "row_content_spacing": 24,
+                "tile_width": 310,
+                "tile_height": 180,
+                "tile_font_size": 16,
+                "tile_icon_size": 90,
+                "tile_font_css": 16,
                 "tile_padding_lr": 20,
                 "tile_padding_top": 22,
                 "tile_padding_bottom": 18,
                 "tile_padding_top_subtitle": 14,
                 "tile_padding_bottom_subtitle": 14,
                 "action_button_size": 36,
-                "action_button_font_css": 14,
+                "action_button_font_css": 15,
                 "footer_padding_y": 6,
-                "cancel_button_min_width": 132,
+                "cancel_button_min_width": 140,
+                "card_shadow_radius": 8,
+                "card_focus_scale": 1.06,
             }
         return {
             "compact": False,
-            "main_margin_x": 48,
-            "main_margin_top": 40,
-            "main_margin_bottom": 32,
-            "main_spacing": 20,
+            "main_margin_x": 40,
+            "main_margin_top": 12,
+            "main_margin_bottom": 24,
+            "main_spacing": 18,
             "hero_margin_x": 32,
-            "hero_margin_y": 24,
-            "hero_spacing": 8,
-            "hero_title_font": 42,
+            "hero_margin_y": 16,
+            "hero_spacing": 16,
+            "hero_title_font": 36,
             "hero_title_css": 36,
             "settings_button_size": 48,
             "settings_button_font": 20,
-            "section_heading_font": 24,
-            "footer_font": 15,
+            "section_heading_font": 26,
+            "footer_font": 14,
             "status_font": 14,
-            "tile_stack_spacing": 22,
-            "row_label_css": 24,
-            "row_scroll_height": 290,
+            "tile_stack_spacing": 20,
+            "row_label_css": 28,
+            "row_scroll_height": 320,
             "row_content_margin_x": 12,
             "row_content_margin_y": 8,
-            "row_content_spacing": 28,
-            "tile_width": 400,
-            "tile_height": 230,
-            "tile_font_size": 19,
-            "tile_icon_size": 130,
-            "tile_font_css": 18,
-            "tile_padding_lr": 32,
-            "tile_padding_top": 40,
-            "tile_padding_bottom": 28,
+            "row_content_spacing": 36,
+            "tile_width": 450,
+            "tile_height": 260,
+            "tile_font_size": 21,
+            "tile_icon_size": 160,
+            "tile_font_css": 20,
+            "tile_padding_lr": 28,
+            "tile_padding_top": 36,
+            "tile_padding_bottom": 26,
             "tile_padding_top_subtitle": 18,
             "tile_padding_bottom_subtitle": 18,
             "action_button_size": 44,
-            "action_button_font_css": 18,
-            "footer_padding_y": 12,
-            "cancel_button_min_width": 160,
+            "action_button_font_css": 19,
+            "footer_padding_y": 10,
+            "cancel_button_min_width": 170,
+            "card_shadow_radius": 12,
+            "card_focus_scale": 1.06,
         }
 
     def showEvent(self, event):
@@ -2290,6 +2471,86 @@ class LauncherWindow(QMainWindow):
         # Delay the reset until the window is actually visible so auto-open
         # also starts on a fresh system boot.
         QTimer.singleShot(0, self.reset_auto_launch_timer)
+
+    def get_ip_address(self):
+        """Get the local IP address of the machine"""
+        import socket
+        try:
+            # Create a socket connection to get the local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip_address = s.getsockname()[0]
+            s.close()
+            return ip_address
+        except Exception:
+            return "127.0.0.1"
+
+    def get_wifi_ssid(self):
+        """Get the current WiFi SSID"""
+        import subprocess
+        try:
+            # Use the exact command: nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2
+            result = subprocess.run(
+                "nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2",
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                ssid = result.stdout.strip()
+                import logging
+                logging.info(f"WiFi SSID found: {ssid}")
+                return ssid
+            
+            import logging
+            logging.info("No WiFi SSID found")
+            return ""
+        except Exception as e:
+            import logging
+            logging.error(f"Error getting WiFi SSID: {e}")
+            return ""
+    
+    def is_wifi_connection(self):
+        """Check if current connection is via WiFi"""
+        import subprocess
+        try:
+            # Check if we have an active WiFi connection
+            result = subprocess.run(
+                "nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2",
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            is_wifi = result.returncode == 0 and result.stdout.strip()
+            import logging
+            logging.info(f"is_wifi_connection result: {is_wifi}, output: '{result.stdout.strip()}'")
+            return is_wifi
+        except Exception as e:
+            import logging
+            logging.error(f"Error checking WiFi connection: {e}")
+            return False
+
+    def shutdown_system(self):
+        """Shutdown the system"""
+        import subprocess
+        try:
+            subprocess.run(["sudo", "shutdown", "now"], check=False)
+        except Exception as e:
+            logging.error(f"Failed to shutdown: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to shutdown: {e}")
+
+    def restart_system(self):
+        """Restart the system"""
+        import subprocess
+        try:
+            subprocess.run(["sudo", "reboot"], check=False)
+        except Exception as e:
+            logging.error(f"Failed to restart: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to restart: {e}")
 
     def setup_ui(self):
         self.ui_metrics = self.compute_ui_metrics()
@@ -2317,15 +2578,60 @@ class LauncherWindow(QMainWindow):
 
         hero_top_row = QHBoxLayout()
         hero_top_row.setContentsMargins(0, 0, 0, 0)
-        hero_top_row.setSpacing(16)
+        hero_top_row.setSpacing(20)
 
-        hero_top_row.addStretch(1)
+        # Left-aligned title
         title = QLabel("LinuxTV")
         title.setObjectName("heroTitle")
         title.setFont(QFont("Sans Serif", self.ui_metrics["hero_title_font"], QFont.Bold))
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignLeft)
         hero_top_row.addWidget(title)
+
         hero_top_row.addStretch(1)
+
+        # IP Address and WiFi SSID label
+        ip_address = self.get_ip_address()
+        wifi_ssid = self.get_wifi_ssid()
+        is_wifi = self.is_wifi_connection()
+        
+        import logging
+        logging.info(f"IP: {ip_address}, WiFi SSID: '{wifi_ssid}', Is WiFi: {is_wifi}")
+        
+        if is_wifi:
+            if wifi_ssid:
+                ip_text = f"WiFi: {wifi_ssid} • {ip_address}"
+            else:
+                ip_text = f"WiFi • {ip_address}"
+        else:
+            ip_text = f"Ethernet • {ip_address}"
+        
+        ip_label = QLabel(ip_text)
+        ip_label.setObjectName("ipLabel")
+        ip_label.setFont(QFont("Sans Serif", max(13, self.ui_metrics["settings_button_font"] - 5)))
+        ip_label.setStyleSheet("color: #8b949e; padding-right: 8px;")
+        hero_top_row.addWidget(ip_label)
+
+        # Shutdown button
+        shutdown_button = QToolButton()
+        shutdown_button.setObjectName("shutdownButton")
+        shutdown_button.setText("⏻")
+        shutdown_button.setToolTip("Shutdown")
+        shutdown_button.setCursor(Qt.PointingHandCursor)
+        shutdown_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        shutdown_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"] - 6))
+        shutdown_button.clicked.connect(self.shutdown_system)
+        hero_top_row.addWidget(shutdown_button)
+
+        # Restart button
+        restart_button = QToolButton()
+        restart_button.setObjectName("restartButton")
+        restart_button.setText("⟳")
+        restart_button.setToolTip("Restart")
+        restart_button.setCursor(Qt.PointingHandCursor)
+        restart_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        restart_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
+        restart_button.clicked.connect(self.restart_system)
+        hero_top_row.addWidget(restart_button)
 
         settings_button = QToolButton()
         settings_button.setObjectName("settingsButton")
@@ -2356,7 +2662,7 @@ class LauncherWindow(QMainWindow):
         scroll.setWidget(container)
         main_layout.addWidget(scroll)
 
-        footer = QLabel("Navigate with arrows • Select with Enter • Add apps with the Add App tile • Exit with Esc")
+        footer = QLabel("↑↓←→ Navigate  •  Enter Select  •  Esc Exit")
         footer.setObjectName("footerHint")
         footer.setWordWrap(True)
         footer.setFont(QFont("Sans Serif", self.ui_metrics["footer_font"]))
@@ -2388,6 +2694,8 @@ class LauncherWindow(QMainWindow):
         self.setCentralWidget(central)
         # Install event filter to capture wheel events for touchpad scrolling
         central.installEventFilter(self)
+        scroll.installEventFilter(self)
+        scroll.viewport().installEventFilter(self)
         self.apply_theme()
 
         if self.tiles:
@@ -2398,43 +2706,74 @@ class LauncherWindow(QMainWindow):
         m = self.ui_metrics
         stylesheet = """
             QMainWindow {
-                background: #0d0d0d;
+                background: #0a0e14;
             }
             QWidget#centralShell {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #0a0a0a, stop:0.5 #111111, stop:1 #0d0d0d);
-                color: #f5f5f5;
+                background: transparent;
+                color: #e6edf3;
             }
             QWidget#heroCard {
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1a1a1a, stop:0.5 #222222, stop:1 #1a1a1a);
-                border: 1px solid #333333;
-                border-radius: 16px;
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid rgba(48, 54, 61, 0.5);
             }
             QToolButton#settingsButton {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #e0e0e0;
-                border: 1px solid #444444;
-                border-radius: __SETTINGS_RADIUS__px;
+                background: transparent;
+                color: #c9d1d9;
+                border: none;
                 font-size: __SETTINGS_FONT__px;
-                padding-bottom: 1px;
+                padding: 0;
             }
             QToolButton#settingsButton:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                border: 1px solid #ff5252;
-                color: #ffffff;
+                background: rgba(88, 166, 255, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #58a6ff;
             }
             QToolButton#settingsButton:pressed {
-                background-color: #b71c1c;
-                border: 1px solid #e53935;
+                background: rgba(88, 166, 255, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#shutdownButton {
+                background: transparent;
+                color: #f85149;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#shutdownButton:hover {
+                background: rgba(248, 81, 73, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #ff6b6b;
+            }
+            QToolButton#shutdownButton:pressed {
+                background: rgba(248, 81, 73, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#restartButton {
+                background: transparent;
+                color: #d29922;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#restartButton:hover {
+                background: rgba(210, 153, 34, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #e3b341;
+            }
+            QToolButton#restartButton:pressed {
+                background: rgba(210, 153, 34, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
             }
             QLabel#heroTitle {
                 color: #ffffff;
                 font-weight: bold;
-                letter-spacing: 1px;
+                letter-spacing: 0.8px;
                 font-size: __HERO_TITLE__px;
+            }
+            QLabel#ipLabel {
+                color: #8b949e;
+                font-size: 14px;
             }
             QScrollArea#tileScroll, QWidget#tileContainer {
                 background: transparent;
@@ -2444,10 +2783,10 @@ class LauncherWindow(QMainWindow):
                 background: transparent;
             }
             QLabel[rowHeading="true"] {
-                color: #ffffff;
+                color: #f0f3f6;
                 font-size: __ROW_HEADING__px;
-                font-weight: bold;
-                padding: 12px 8px 8px 8px;
+                font-weight: 700;
+                padding: 20px 16px 12px 16px;
                 letter-spacing: 0.5px;
             }
             QScrollArea[rowScroll="true"] {
@@ -2471,132 +2810,134 @@ class LauncherWindow(QMainWindow):
                 background: transparent;
             }
             QPushButton[tileVariant="default"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1e1e1e, stop:1 #151515);
-                color: #e8e8e8;
-                border: 2px solid #333333;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1e2329, stop:1 #16191f);
+                color: #e6edf3;
+                border: 1px solid rgba(76, 83, 91, 0.3);
                 border-radius: 16px;
                 padding: __TILE_PADDING_BOTTOM__px __TILE_PADDING_LR__px;
                 padding-left: __TILE_PADDING_LR__px;
                 padding-right: __TILE_PADDING_LR__px;
                 padding-top: __TILE_PADDING_TOP__px;
                 padding-bottom: __TILE_PADDING_BOTTOM__px;
-                text-align: left;
-                font-size: __TILE_FONT__px;
-                font-weight: 500;
-            }
-            QPushButton[tileVariant="default"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1e1e1e);
-                border: 2px solid #e53935;
-            }
-            QPushButton[tileVariant="default"]:focus {
-                border: 3px solid #ff5252;
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                color: #ffffff;
-                font-weight: bold;
-            }
-            QPushButton[tileVariant="accent"] {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                color: #ffffff;
-                border: 2px solid #ff5252;
-                border-radius: 16px;
-                padding: __TILE_PADDING_BOTTOM__px __TILE_PADDING_LR__px;
-                padding-left: __TILE_PADDING_LR__px;
-                padding-right: __TILE_PADDING_LR__px;
-                padding-top: __TILE_PADDING_TOP__px;
-                padding-bottom: __TILE_PADDING_BOTTOM__px;
-                text-align: left;
+                text-align: center;
                 font-size: __TILE_FONT__px;
                 font-weight: 600;
             }
+            QPushButton[tileVariant="default"]:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #24292f, stop:1 #1c2128);
+                border: 1px solid rgba(88, 96, 105, 0.5);
+            }
+            QPushButton[tileVariant="default"]:focus {
+                border: 2px solid #58a6ff;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(31, 111, 235, 0.2), stop:1 rgba(22, 87, 183, 0.25));
+                color: #ffffff;
+                font-weight: 700;
+            }
+            QPushButton[tileVariant="accent"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #238636, stop:1 #1a7f37);
+                color: #ffffff;
+                border: 1px solid #2ea043;
+                border-radius: 16px;
+                padding: __TILE_PADDING_BOTTOM__px __TILE_PADDING_LR__px;
+                padding-left: __TILE_PADDING_LR__px;
+                padding-right: __TILE_PADDING_LR__px;
+                padding-top: __TILE_PADDING_TOP__px;
+                padding-bottom: __TILE_PADDING_BOTTOM__px;
+                text-align: center;
+                font-size: __TILE_FONT__px;
+                font-weight: 700;
+            }
             QPushButton[tileVariant="accent"]:hover {
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5252, stop:1 #e53935);
-                border: 2px solid #ff867f;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2ea043, stop:1 #238636);
+                border: 1px solid #3fb950;
             }
             QPushButton[tileVariant="accent"]:focus {
-                border: 3px solid #ffffff;
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff5252, stop:1 #e53935);
+                border: 2px solid #58a6ff;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(46, 160, 67, 0.25), stop:1 rgba(35, 134, 54, 0.3));
             }
             QWidget#appCardShell {
                 background: transparent;
             }
             QToolButton#editButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #bdbdbd;
-                border: 1px solid #444444;
-                border-radius: 16px;
+                    stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
+                color: #8b949e;
+                border: 1px solid rgba(76, 83, 91, 0.5);
+                border-radius: 14px;
                 font-size: 18px;
                 padding-bottom: 2px;
             }
             QToolButton#editButton:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3a3a3a, stop:1 #2a2a2a);
+                    stop:0 #58a6ff, stop:1 #1f6feb);
                 color: #ffffff;
-                border: 1px solid #e53935;
+                border: 1px solid #58a6ff;
             }
             QToolButton#editButton:pressed {
-                background-color: #1f1f1f;
-                border: 1px solid #ff5252;
+                background-color: #1158c7;
+                border: 1px solid #58a6ff;
             }
             QToolButton#deleteButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3d1a1a, stop:1 #2d1212);
-                color: #ff5252;
-                border: 1px solid #c62828;
-                border-radius: 16px;
+                    stop:0 rgba(72, 23, 23, 0.9), stop:1 rgba(58, 18, 18, 0.95));
+                color: #f85149;
+                border: 1px solid rgba(248, 81, 73, 0.5);
+                border-radius: 14px;
                 font-size: 18px;
             }
             QToolButton#deleteButton:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #4d2424, stop:1 #3d1a1a);
-                border: 1px solid #ff5252;
+                    stop:0 #f85149, stop:1 #da3633);
+                border: 1px solid #f85149;
+                color: #ffffff;
             }
             QToolButton#deleteButton:pressed {
-                background-color: #2d1212;
-                border: 1px solid #e53935;
+                background-color: #a40e26;
+                border: 1px solid #f85149;
             }
             QPushButton[hasSubtitle="true"] {
                 padding-top: __TILE_SUBTITLE_TOP__px;
                 padding-bottom: __TILE_SUBTITLE_BOTTOM__px;
             }
             QLabel#footerHint {
-                color: #9e9e9e;
+                color: rgba(139, 148, 158, 0.6);
                 padding: __FOOTER_PADDING_Y__px 20px;
                 font-size: __FOOTER_FONT__px;
                 letter-spacing: 0.3px;
+                background: transparent;
             }
             QLabel#autoLaunchStatus {
-                color: #ff5252;
+                color: #58a6ff;
                 padding: 0 20px 12px 20px;
                 font-size: __STATUS_FONT__px;
-                font-weight: 500;
+                font-weight: 600;
             }
             QPushButton#autoLaunchCancelButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2a2a2a, stop:1 #1f1f1f);
-                color: #e0e0e0;
-                border: 1px solid #444444;
+                    stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
+                color: #c9d1d9;
+                border: 1px solid rgba(76, 83, 91, 0.5);
                 border-radius: 16px;
                 padding: 12px 20px;
                 min-width: __CANCEL_WIDTH__px;
                 font-size: __STATUS_FONT__px;
-                font-weight: 500;
+                font-weight: 600;
             }
             QPushButton#autoLaunchCancelButton:hover {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #e53935, stop:1 #c62828);
-                border: 1px solid #ff5252;
+                    stop:0 #58a6ff, stop:1 #1f6feb);
+                border: 1px solid #58a6ff;
                 color: #ffffff;
             }
             QPushButton#autoLaunchCancelButton:pressed {
-                background-color: #b71c1c;
-                border: 1px solid #e53935;
+                background-color: #1158c7;
+                border: 1px solid #58a6ff;
             }
             """
         replacements = {
@@ -2625,6 +2966,15 @@ class LauncherWindow(QMainWindow):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+        # Clear animation references
+        if hasattr(self, '_fade_animations'):
+            self._fade_animations.clear()
+
+    def clear_fade_animations(self):
+        """Clear fade animation references after they complete"""
+        if hasattr(self, '_fade_animations'):
+            self._fade_animations.clear()
+
 
     def populate_tiles(self):
         self.clear_tiles()
@@ -2644,7 +2994,9 @@ class LauncherWindow(QMainWindow):
             section_layout.setContentsMargins(0, 0, 0, 0)
             section_layout.setSpacing(12)
 
-            label = QLabel(category_name)
+            # Add icon based on category type
+            icon = "🎬" if "Native" in category_name else "🌐"
+            label = QLabel(f"{icon}  {category_name}")
             label.setProperty("rowHeading", "true")
             section_layout.addWidget(label)
 
@@ -2668,6 +3020,7 @@ class LauncherWindow(QMainWindow):
             row_layout.setSpacing(self.ui_metrics["row_content_spacing"])
 
             row_tiles = []
+            card_index = 0
             for entry in entries:
                 app = entry["item"]
                 tile = TileButton(
@@ -2686,12 +3039,14 @@ class LauncherWindow(QMainWindow):
                     lambda checked=False, item=app, kind=entry["kind"]: self.prompt_delete_entry(kind, item),
                     metrics=self.ui_metrics,
                 )
+                
                 tile.card_shell = card
                 tile.row_scroll = row_scroll
                 tile.section_widget = section
                 row_layout.addWidget(card)
                 self.tiles.append(tile)
                 row_tiles.append(tile)
+                card_index += 1
 
                 future = self._icon_pool.submit(self._resolve_icon, entry)
                 future.add_done_callback(
@@ -3133,6 +3488,54 @@ class LauncherWindow(QMainWindow):
         if not nmcli:
             return [], "", "NetworkManager tools are not installed. Install `network-manager` to manage Wi-Fi here."
 
+        import time
+        
+        # Turn on WiFi if it's disabled
+        try:
+            # Check current WiFi status
+            radio_result = subprocess.run(
+                [nmcli, "radio", "wifi"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            
+            # If WiFi is off, turn it on
+            if "disabled" in radio_result.stdout.lower() or radio_result.returncode != 0:
+                subprocess.run(
+                    [nmcli, "radio", "wifi", "on"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10
+                )
+                time.sleep(3)  # Wait for WiFi to enable
+        except Exception:
+            logging.exception("Failed to enable Wi-Fi radio")
+        
+        # Try to enable NetworkManager if it's not running
+        try:
+            systemctl_path = shutil.which("systemctl")
+            if systemctl_path:
+                status_result = subprocess.run(
+                    [systemctl_path, "is-active", "NetworkManager"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5
+                )
+                if status_result.stdout.strip() != "active":
+                    subprocess.run(
+                        ["sudo", systemctl_path, "start", "NetworkManager"],
+                        capture_output=True,
+                        check=False,
+                        timeout=10
+                    )
+                    time.sleep(2)
+        except Exception:
+            logging.exception("Failed to start NetworkManager")
+
         current_wifi = ""
         try:
             current_result = subprocess.run(
@@ -3346,39 +3749,230 @@ class LauncherWindow(QMainWindow):
             return [], "", "bluetoothctl is not installed. Install `bluez` to manage Bluetooth here."
         
         current_bluetooth = ""
-        devices = []
+        devices = {}
+        import time
+        import re
+        
         try:
-            # Power on first
-            subprocess.run([bluetoothctl, "power", "on"], capture_output=True, check=False)
-            # Scan for a short time
-            subprocess.run([bluetoothctl, "--timeout", "5", "scan", "on"], capture_output=True, check=False)
+            # Try to start Bluetooth service if it's not running
+            systemctl_path = shutil.which("systemctl")
+            if systemctl_path:
+                # Check if bluetooth service is active
+                status_result = subprocess.run(
+                    [systemctl_path, "is-active", "bluetooth"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5
+                )
+                # If not active, try to start it
+                if status_result.stdout.strip() != "active":
+                    subprocess.run(
+                        ["sudo", systemctl_path, "start", "bluetooth"],
+                        capture_output=True,
+                        check=False,
+                        timeout=10
+                    )
+                    time.sleep(3)
             
-            result = subprocess.run(
-                [bluetoothctl, "devices"],
+            # Start interactive bluetoothctl session
+            bt_proc = subprocess.Popen(
+                [bluetoothctl],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            # First, try to unblock Bluetooth if rfkill is available
+            rfkill_path = shutil.which("rfkill") or shutil.which("rfkill", path=os.environ.get("PATH", "") + os.pathsep + "/usr/sbin")
+            if rfkill_path:
+                subprocess.run([rfkill_path, "unblock", "bluetooth"], capture_output=True, check=False, timeout=5)
+            
+            # Check current controller state
+            show_result = subprocess.run(
+                [bluetoothctl, "show"],
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=10,
+                timeout=10
             )
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    parts = line.split(" ", 2)
-                    if len(parts) >= 3 and parts[0] == "Device":
-                        mac = parts[1]
-                        name = parts[2]
-                        # Assume no signal strength easily available without more complicated DBus
-                        devices.append({
-                            "mac": mac,
-                            "name": name,
-                            "label": f"{name} ({mac})"
-                        })
+            
+            bluetooth_was_off = True
+            if show_result.returncode == 0:
+                for line in show_result.stdout.splitlines():
+                    if 'Powered:' in line:
+                        if 'yes' in line.lower():
+                            bluetooth_was_off = False
+                        break
+            
+            # Power on the controller - this will turn on Bluetooth if it's off
+            if bt_proc.stdin:
+                bt_proc.stdin.write("power on\n")
+                bt_proc.stdin.flush()
+                time.sleep(4)  # Give it more time to power on
+            
+            # Verify power on worked by checking show output
+            if bt_proc.stdin:
+                bt_proc.stdin.write("show\n")
+                bt_proc.stdin.flush()
+                time.sleep(2)
+            
+            # List controllers to confirm
+            if bt_proc.stdin:
+                bt_proc.stdin.write("list\n")
+                bt_proc.stdin.flush()
+                time.sleep(1)
+            
+            # Enable the controller (in case it was disabled)
+            if bt_proc.stdin:
+                bt_proc.stdin.write("enable\n")
+                bt_proc.stdin.flush()
+                time.sleep(2)
+            
+            # Make controller discoverable and pairable
+            if bt_proc.stdin:
+                bt_proc.stdin.write("discoverable on\n")
+                bt_proc.stdin.flush()
+                time.sleep(1)
+                
+                bt_proc.stdin.write("pairable on\n")
+                bt_proc.stdin.flush()
+                time.sleep(1)
+            
+            # Enable agent
+            if bt_proc.stdin:
+                bt_proc.stdin.write("agent on\n")
+                bt_proc.stdin.flush()
+                time.sleep(1)
+                
+                bt_proc.stdin.write("default-agent\n")
+                bt_proc.stdin.flush()
+                time.sleep(1)
+            
+            # Start scanning - this will discover ALL nearby devices
+            if bt_proc.stdin:
+                bt_proc.stdin.write("scan on\n")
+                bt_proc.stdin.flush()
+            
+            # Wait for scan to discover devices (15 seconds for thorough scan)
+            time.sleep(15)
+            
+            # Stop scanning
+            if bt_proc.stdin:
+                bt_proc.stdin.write("scan off\n")
+                bt_proc.stdin.flush()
+                time.sleep(2)
+            
+            # Get all discovered devices
+            if bt_proc.stdin:
+                bt_proc.stdin.write("devices\n")
+                bt_proc.stdin.flush()
+                time.sleep(2)
+            
+            # Get the output
+            bt_proc.terminate()
+            try:
+                stdout, stderr = bt_proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                bt_proc.kill()
+                stdout, stderr = bt_proc.communicate(timeout=5)
+            
+            # Parse discovered devices from output
+            # Format: "Device XX:XX:XX:XX:XX:XX Device Name"
+            device_pattern = re.compile(r'^Device\s+([\w:]+)\s+(.+)$', re.MULTILINE)
+            for match in device_pattern.finditer(stdout):
+                mac = match.group(1)
+                name = match.group(2).strip()
+                if mac not in devices:
+                    devices[mac] = {
+                        "mac": mac,
+                        "name": name,
+                        "label": f"{name} ({mac})",
+                        "connected": False,
+                        "paired": False
+                    }
+            
+            # Get detailed info for each device to check connection/paired status
+            for mac in list(devices.keys()):
+                try:
+                    info_result = subprocess.run(
+                        [bluetoothctl, "info", mac],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10,
+                    )
+                    
+                    if info_result.returncode == 0:
+                        is_connected = False
+                        is_paired = False
+                        
+                        for line in info_result.stdout.splitlines():
+                            if 'Connected:' in line and 'yes' in line.lower():
+                                is_connected = True
+                            if 'Paired:' in line and 'yes' in line.lower():
+                                is_paired = True
+                        
+                        # Update label with status
+                        status_parts = []
+                        if is_connected:
+                            status_parts.append("Connected")
+                        if is_paired:
+                            status_parts.append("Paired")
+                        
+                        if status_parts:
+                            devices[mac]["label"] = f"{devices[mac]['name']} ({mac}) [{' | '.join(status_parts)}]"
+                            devices[mac]["connected"] = is_connected
+                            devices[mac]["paired"] = is_paired
+                        else:
+                            devices[mac]["label"] = f"{devices[mac]['name']} ({mac}) [Discovered]"
+                except Exception:
+                    pass
+            
+            # Also check paired-devices to ensure completeness
+            try:
+                paired_result = subprocess.run(
+                    [bluetoothctl, "paired-devices"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                
+                if paired_result.returncode == 0:
+                    for line in paired_result.stdout.splitlines():
+                        match = re.match(r'Device\s+([\w:]+)\s+(.+)', line)
+                        if match:
+                            mac = match.group(1)
+                            name = match.group(2).strip()
+                            if mac not in devices:
+                                devices[mac] = {
+                                    "mac": mac,
+                                    "name": name,
+                                    "label": f"{name} ({mac}) [Paired]",
+                                    "connected": False,
+                                    "paired": True
+                                }
+            except Exception:
+                pass
+                
         except Exception as exc:
             import logging
             logging.exception("Failed to scan Bluetooth devices")
             return [], "", f"Could not scan: {exc}"
+        
+        # Convert to list and sort: connected first, then paired, then by name
+        device_list = list(devices.values())
+        device_list.sort(key=lambda d: (not d.get("connected", False), not d.get("paired", False), d.get("name", "")))
             
-        message = f"Found {len(devices)} device(s)." if devices else "No Bluetooth devices found."
-        return devices, current_bluetooth, message
+        if not device_list:
+            message = "No Bluetooth devices found. Try: 1) sudo rfkill unblock bluetooth, 2) Ensure Bluetooth service is running (sudo systemctl status bluetooth), 3) Make devices discoverable."
+        else:
+            message = f"Found {len(device_list)} device(s)."
+        
+        return device_list, current_bluetooth, message
 
     def connect_to_bluetooth(self, device_info):
         if isinstance(device_info, dict):
@@ -3985,6 +4579,32 @@ class LauncherWindow(QMainWindow):
 
     def process_remote_pointer_event(self, event):
         event_type = str(event.get("event", "")).lower()
+        
+        # If launcher is visible (no active app), move mouse relative to current position
+        if not self.active_process or self.active_process.poll() is not None:
+            xdotool = shutil.which("xdotool")
+            if not xdotool:
+                logging.warning("xdotool is not installed; cannot forward remote pointer event")
+                return
+            
+            # For launcher screen, just move the mouse relatively
+            if event_type == "move":
+                dx = int(round(float(event.get("dx", 0)) * REMOTE_POINTER_SPEED_MULTIPLIER))
+                dy = int(round(float(event.get("dy", 0)) * REMOTE_POINTER_SPEED_MULTIPLIER))
+                if dx or dy:
+                    subprocess.run([xdotool, "mousemove_relative", "--", str(dx), str(dy)], check=False)
+                return
+            
+            # For clicks on launcher, use current mouse position
+            if event_type in ("tap", "click"):
+                subprocess.run([xdotool, "click", "1"], check=False)
+                return
+            
+            if event_type == "right_click":
+                subprocess.run([xdotool, "click", "3"], check=False)
+                return
+        
+        # If an app is running, use the existing logic
         allow_cached = event_type == "move"
         focus_target = event_type != "move"
         xdotool, target_window = self.remote_target_window(focus=focus_target, allow_cached=allow_cached)
