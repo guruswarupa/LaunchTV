@@ -1750,23 +1750,657 @@ class ConfirmDialog(QDialog):
         self.setStyleSheet(dialog_stylesheet(metrics))
 
 
-class SettingsDialog(QDialog):
+class NetworkDialog(QDialog):
     wifi_scan_finished = Signal(object, str, str)
+
+    def __init__(
+        self,
+        wifi_networks=None,
+        current_wifi="",
+        wifi_refresh_callback=None,
+        wifi_connect_callback=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        metrics = dialog_metrics()
+        self.setWindowTitle("Network Settings")
+        self.setModal(True)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
+
+        wifi_networks = wifi_networks or []
+        self.wifi_refresh_callback = wifi_refresh_callback
+        self.wifi_connect_callback = wifi_connect_callback
+        self._wifi_scan_in_progress = False
+        self._wifi_has_loaded = bool(wifi_networks or current_wifi)
+        self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+
+        title = QLabel("Network Settings")
+        title.setObjectName("dialogTitle")
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
+        layout.addWidget(title)
+
+        wifi_panel = QWidget()
+        wifi_layout = QVBoxLayout(wifi_panel)
+        wifi_layout.setContentsMargins(0, 0, 0, 0)
+        wifi_layout.setSpacing(metrics["dialog_spacing"])
+
+        wifi_title = QLabel("Wi-Fi")
+        wifi_title.setObjectName("dialogSection")
+        wifi_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        wifi_layout.addWidget(wifi_title)
+
+        wifi_subtitle = QLabel("Scan for nearby networks, enter a password if needed, and connect without leaving LinuxTV.")
+        wifi_subtitle.setObjectName("dialogSubtitle")
+        wifi_subtitle.setWordWrap(True)
+        wifi_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        wifi_layout.addWidget(wifi_subtitle)
+
+        self.wifi_combo = QComboBox()
+        self.wifi_combo.setEditable(True)
+        self.wifi_combo.setMinimumHeight(metrics["input_min_height"] + 2)
+        self._style_settings_combo_popup(self.wifi_combo)
+        self.wifi_combo.lineEdit().setPlaceholderText("Select or type a Wi-Fi network name")
+        wifi_layout.addWidget(self.wifi_combo)
+
+        self.wifi_password_input = QLineEdit()
+        self.wifi_password_input.setPlaceholderText("Wi-Fi password")
+        self.wifi_password_input.setEchoMode(QLineEdit.Password)
+        self.wifi_password_input.setMinimumHeight(metrics["input_min_height"] + 2)
+        wifi_layout.addWidget(self.wifi_password_input)
+
+        wifi_button_row = QHBoxLayout()
+        self.refresh_wifi_button = QPushButton("Refresh Networks")
+        self.refresh_wifi_button.setProperty("tileVariant", "dialogSecondary")
+        self.refresh_wifi_button.clicked.connect(self.refresh_wifi_networks)
+        wifi_button_row.addWidget(self.refresh_wifi_button)
+
+        self.connect_wifi_button = QPushButton("Connect Wi-Fi")
+        self.connect_wifi_button.setProperty("tileVariant", "accent")
+        self.connect_wifi_button.clicked.connect(self.connect_wifi)
+        wifi_button_row.addWidget(self.connect_wifi_button)
+        wifi_layout.addLayout(wifi_button_row)
+
+        self.wifi_status_label = QLabel("")
+        self.wifi_status_label.setObjectName("dialogStatus")
+        self.wifi_status_label.setWordWrap(True)
+        wifi_layout.addWidget(self.wifi_status_label)
+
+        layout.addWidget(wifi_panel, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        close_button = QPushButton("Close")
+        close_button.setProperty("tileVariant", "dialogSecondary")
+        close_button.clicked.connect(self.reject)
+        button_row.addWidget(close_button)
+
+        layout.addLayout(button_row)
+        self.set_wifi_networks(wifi_networks, current_wifi)
+        self.set_wifi_loading_state(False)
+
+        self.setStyleSheet(dialog_stylesheet(metrics))
+
+    def _style_settings_combo_popup(self, combo: QComboBox):
+        popup = combo.view()
+        if popup is None:
+            return
+        popup.setStyleSheet(
+            """
+            background-color: #141a21;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+            alternate-background-color: #10161d;
+            """
+        )
+
+    def set_wifi_loading_state(self, loading: bool, message=""):
+        self._wifi_scan_in_progress = loading
+        self.refresh_wifi_button.setEnabled(not loading and bool(self.wifi_refresh_callback))
+        self.connect_wifi_button.setEnabled(not loading and bool(self.wifi_connect_callback))
+        if loading and message:
+            self.wifi_status_label.setText(message)
+
+    def ensure_wifi_networks_loaded(self, force=False):
+        if not self.wifi_refresh_callback:
+            self.set_wifi_loading_state(False)
+            self.wifi_status_label.setText("Wi-Fi scanning is not available on this system.")
+            return
+        if self._wifi_scan_in_progress:
+            return
+        if self._wifi_has_loaded and not force:
+            return
+        status_text = "Refreshing Wi-Fi networks..." if force else "Fetching nearby Wi-Fi networks..."
+        self.set_wifi_loading_state(True, status_text)
+        threading.Thread(
+            target=self._run_wifi_scan,
+            name="wifi-settings-scan",
+            daemon=True,
+        ).start()
+
+    def _run_wifi_scan(self):
+        try:
+            networks, current_wifi, message = self.wifi_refresh_callback()
+        except Exception as exc:
+            logging.exception("Failed to refresh Wi-Fi networks from settings")
+            networks, current_wifi, message = [], "", f"Could not scan for Wi-Fi networks: {exc}"
+        self.wifi_scan_finished.emit(networks, current_wifi, message)
+
+    def handle_wifi_scan_finished(self, wifi_networks, current_wifi, message):
+        self.set_wifi_loading_state(False)
+        self._wifi_has_loaded = True
+        self.set_wifi_networks(wifi_networks or [], current_wifi)
+        if message:
+            self.wifi_status_label.setText(message)
+
+    def set_wifi_networks(self, wifi_networks, current_wifi=""):
+        current_text = self.wifi_combo.currentText().strip()
+        self.wifi_combo.blockSignals(True)
+        self.wifi_combo.clear()
+        selected_index = -1
+        for index, option in enumerate(wifi_networks):
+            label = option.get("label", option.get("ssid", ""))
+            ssid = option.get("ssid", "")
+            self.wifi_combo.addItem(label, dict(option))
+            if current_wifi and ssid == current_wifi:
+                selected_index = index
+        self.wifi_combo.blockSignals(False)
+
+        if selected_index >= 0:
+            self.wifi_combo.setCurrentIndex(selected_index)
+            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
+            return
+
+        if current_text:
+            self.wifi_combo.setEditText(current_text)
+        elif current_wifi:
+            self.wifi_combo.setEditText(current_wifi)
+            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
+        elif wifi_networks:
+            self.wifi_combo.setCurrentIndex(0)
+            self.wifi_status_label.setText("Choose a network and connect from here.")
+        else:
+            self.wifi_combo.setEditText("")
+            self.wifi_status_label.setText("No Wi-Fi networks loaded yet. Open or refresh this section to scan.")
+
+    def refresh_wifi_networks(self):
+        self.ensure_wifi_networks_loaded(force=True)
+
+    def connect_wifi(self):
+        if self._wifi_scan_in_progress:
+            self.wifi_status_label.setText("Still fetching nearby Wi-Fi networks. Try again in a moment.")
+            return
+        if not self.wifi_connect_callback:
+            self.wifi_status_label.setText("Wi-Fi connection is not available on this system.")
+            return
+        selected_network = self.wifi_combo.currentData()
+        if not isinstance(selected_network, dict):
+            selected_network = {"ssid": self.wifi_combo.currentText().strip(), "security": ""}
+        password = self.wifi_password_input.text()
+        success, message, current_wifi = self.wifi_connect_callback(selected_network, password)
+        if current_wifi:
+            self.refresh_wifi_networks()
+        self.wifi_status_label.setText(message)
+        if success:
+            self.wifi_password_input.clear()
+
+
+class BluetoothDialog(QDialog):
     bluetooth_scan_finished = Signal(object, str, str)
 
+    def __init__(
+        self,
+        bluetooth_devices=None,
+        current_bluetooth="",
+        bluetooth_refresh_callback=None,
+        bluetooth_connect_callback=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        metrics = dialog_metrics()
+        self.setWindowTitle("Bluetooth Settings")
+        self.setModal(True)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
+
+        bluetooth_devices = bluetooth_devices or []
+        self.bluetooth_refresh_callback = bluetooth_refresh_callback
+        self.bluetooth_connect_callback = bluetooth_connect_callback
+        self._bluetooth_scan_in_progress = False
+        self._bluetooth_has_loaded = bool(bluetooth_devices or current_bluetooth)
+        self.bluetooth_scan_finished.connect(self.handle_bluetooth_scan_finished)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+
+        title = QLabel("Bluetooth Settings")
+        title.setObjectName("dialogTitle")
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
+        layout.addWidget(title)
+
+        bluetooth_panel = QWidget()
+        bluetooth_layout = QVBoxLayout(bluetooth_panel)
+        bluetooth_layout.setContentsMargins(0, 0, 0, 0)
+        bluetooth_layout.setSpacing(metrics["dialog_spacing"])
+
+        bluetooth_title = QLabel("Bluetooth")
+        bluetooth_title.setObjectName("dialogSection")
+        bluetooth_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        bluetooth_layout.addWidget(bluetooth_title)
+
+        bluetooth_subtitle = QLabel("Scan for nearby Bluetooth devices and connect without leaving LinuxTV.")
+        bluetooth_subtitle.setObjectName("dialogSubtitle")
+        bluetooth_subtitle.setWordWrap(True)
+        bluetooth_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        bluetooth_layout.addWidget(bluetooth_subtitle)
+
+        self.bluetooth_combo = QComboBox()
+        self.bluetooth_combo.setEditable(True)
+        self.bluetooth_combo.setMinimumHeight(metrics["input_min_height"] + 2)
+        self._style_settings_combo_popup(self.bluetooth_combo)
+        self.bluetooth_combo.lineEdit().setPlaceholderText("Select or type a Bluetooth device or MAC address")
+        bluetooth_layout.addWidget(self.bluetooth_combo)
+
+        bluetooth_button_row = QHBoxLayout()
+        self.refresh_bluetooth_button = QPushButton("Refresh Devices")
+        self.refresh_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
+        self.refresh_bluetooth_button.clicked.connect(self.refresh_bluetooth_devices)
+        bluetooth_button_row.addWidget(self.refresh_bluetooth_button)
+
+        self.connect_bluetooth_button = QPushButton("Connect Device")
+        self.connect_bluetooth_button.setProperty("tileVariant", "accent")
+        self.connect_bluetooth_button.clicked.connect(self.connect_bluetooth)
+        bluetooth_button_row.addWidget(self.connect_bluetooth_button)
+        bluetooth_layout.addLayout(bluetooth_button_row)
+
+        self.bluetooth_status_label = QLabel("")
+        self.bluetooth_status_label.setObjectName("dialogStatus")
+        self.bluetooth_status_label.setWordWrap(True)
+        bluetooth_layout.addWidget(self.bluetooth_status_label)
+
+        layout.addWidget(bluetooth_panel, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        close_button = QPushButton("Close")
+        close_button.setProperty("tileVariant", "dialogSecondary")
+        close_button.clicked.connect(self.reject)
+        button_row.addWidget(close_button)
+
+        layout.addLayout(button_row)
+        self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
+        self.set_bluetooth_loading_state(False)
+
+        self.setStyleSheet(dialog_stylesheet(metrics))
+
+    def _style_settings_combo_popup(self, combo: QComboBox):
+        popup = combo.view()
+        if popup is None:
+            return
+        popup.setStyleSheet(
+            """
+            background-color: #141a21;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+            alternate-background-color: #10161d;
+            """
+        )
+
+    def set_bluetooth_loading_state(self, loading: bool, message=""):
+        self._bluetooth_scan_in_progress = loading
+        self.refresh_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_refresh_callback))
+        self.connect_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_connect_callback))
+        if loading and message:
+            self.bluetooth_status_label.setText(message)
+
+    def ensure_bluetooth_devices_loaded(self, force=False):
+        if not self.bluetooth_refresh_callback:
+            self.set_bluetooth_loading_state(False)
+            self.bluetooth_status_label.setText("Bluetooth scanning is not available on this system.")
+            return
+        if self._bluetooth_scan_in_progress:
+            return
+        if self._bluetooth_has_loaded and not force:
+            return
+        status_text = "Refreshing Bluetooth devices..." if force else "Fetching nearby Bluetooth devices..."
+        self.set_bluetooth_loading_state(True, status_text)
+        threading.Thread(
+            target=self._run_bluetooth_scan,
+            name="bluetooth-settings-scan",
+            daemon=True,
+        ).start()
+
+    def _run_bluetooth_scan(self):
+        try:
+            devices, current_bluetooth, message = self.bluetooth_refresh_callback()
+        except Exception as exc:
+            logging.exception("Failed to refresh Bluetooth devices from settings")
+            devices, current_bluetooth, message = [], "", f"Could not scan for Bluetooth devices: {exc}"
+        self.bluetooth_scan_finished.emit(devices, current_bluetooth, message)
+
+    def handle_bluetooth_scan_finished(self, bluetooth_devices, current_bluetooth, message):
+        self.set_bluetooth_loading_state(False)
+        self._bluetooth_has_loaded = True
+        self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
+        if message:
+            self.bluetooth_status_label.setText(message)
+
+    def set_bluetooth_devices(self, bluetooth_devices, current_bluetooth=""):
+        current_text = self.bluetooth_combo.currentText().strip()
+        self.bluetooth_combo.blockSignals(True)
+        self.bluetooth_combo.clear()
+        selected_index = -1
+        for index, option in enumerate(bluetooth_devices):
+            label = option.get("label", option.get("name", ""))
+            mac = option.get("mac", "")
+            self.bluetooth_combo.addItem(label, dict(option))
+            if current_bluetooth and mac == current_bluetooth:
+                selected_index = index
+        self.bluetooth_combo.blockSignals(False)
+
+        if selected_index >= 0:
+            self.bluetooth_combo.setCurrentIndex(selected_index)
+            self.bluetooth_status_label.setText(f"Connected device: {current_bluetooth}")
+            return
+
+        if current_text:
+            self.bluetooth_combo.setEditText(current_text)
+        elif current_bluetooth:
+            self.bluetooth_combo.setEditText(current_bluetooth)
+            self.bluetooth_status_label.setText(f"Connected device: {current_bluetooth}")
+        elif bluetooth_devices:
+            self.bluetooth_combo.setCurrentIndex(0)
+            self.bluetooth_status_label.setText("Choose a device and connect from here.")
+        else:
+            self.bluetooth_combo.setEditText("")
+            self.bluetooth_status_label.setText("No Bluetooth devices loaded yet. Open or refresh this section to scan.")
+
+    def refresh_bluetooth_devices(self):
+        self.ensure_bluetooth_devices_loaded(force=True)
+
+    def connect_bluetooth(self):
+        if self._bluetooth_scan_in_progress:
+            self.bluetooth_status_label.setText("Still fetching nearby Bluetooth devices. Try again in a moment.")
+            return
+        if not self.bluetooth_connect_callback:
+            self.bluetooth_status_label.setText("Bluetooth connection is not available on this system.")
+            return
+        selected_device = self.bluetooth_combo.currentData()
+        if not isinstance(selected_device, dict):
+            selected_device = {"mac": self.bluetooth_combo.currentText().strip()}
+        success, message, current_bluetooth = self.bluetooth_connect_callback(selected_device)
+        if current_bluetooth:
+             self.refresh_bluetooth_devices()
+        self.bluetooth_status_label.setText(message)
+
+
+class SoundDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        metrics = dialog_metrics()
+        self.setWindowTitle("Sound Settings")
+        self.setModal(True)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+
+        title = QLabel("Sound Settings")
+        title.setObjectName("dialogTitle")
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
+        layout.addWidget(title)
+
+        sound_panel = QWidget()
+        sound_layout = QVBoxLayout(sound_panel)
+        sound_layout.setContentsMargins(0, 0, 0, 0)
+        sound_layout.setSpacing(metrics["dialog_spacing"])
+
+        sound_title = QLabel("Audio Output")
+        sound_title.setObjectName("dialogSection")
+        sound_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        sound_layout.addWidget(sound_title)
+
+        sound_subtitle = QLabel("Select the speaker or audio output device for playing sound.")
+        sound_subtitle.setObjectName("dialogSubtitle")
+        sound_subtitle.setWordWrap(True)
+        sound_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        sound_layout.addWidget(sound_subtitle)
+
+        self.speaker_combo = QComboBox()
+        self.speaker_combo.setMinimumHeight(metrics["input_min_height"] + 2)
+        self._style_settings_combo_popup(self.speaker_combo)
+        sound_layout.addWidget(self.speaker_combo)
+
+        speaker_button_row = QHBoxLayout()
+        self.refresh_speakers_button = QPushButton("Refresh Devices")
+        self.refresh_speakers_button.setProperty("tileVariant", "dialogSecondary")
+        self.refresh_speakers_button.clicked.connect(self.refresh_speakers)
+        speaker_button_row.addWidget(self.refresh_speakers_button)
+
+        self.set_default_button = QPushButton("Set as Default")
+        self.set_default_button.setProperty("tileVariant", "accent")
+        self.set_default_button.clicked.connect(self.set_default_speaker)
+        speaker_button_row.addWidget(self.set_default_button)
+        sound_layout.addLayout(speaker_button_row)
+
+        self.speaker_status_label = QLabel("")
+        self.speaker_status_label.setObjectName("dialogStatus")
+        self.speaker_status_label.setWordWrap(True)
+        sound_layout.addWidget(self.speaker_status_label)
+
+        layout.addWidget(sound_panel, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        close_button = QPushButton("Close")
+        close_button.setProperty("tileVariant", "dialogSecondary")
+        close_button.clicked.connect(self.reject)
+        button_row.addWidget(close_button)
+
+        layout.addLayout(button_row)
+
+        self.setStyleSheet(dialog_stylesheet(metrics))
+        self.load_speakers()
+
+    def _style_settings_combo_popup(self, combo: QComboBox):
+        popup = combo.view()
+        if popup is None:
+            return
+        popup.setStyleSheet(
+            """
+            background-color: #141a21;
+            color: #edf2f7;
+            border: 1px solid #2b3641;
+            selection-background-color: #33c3a0;
+            selection-color: #09110f;
+            alternate-background-color: #10161d;
+            """
+        )
+
+    def load_speakers(self):
+        """Load available audio output devices"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            self.speaker_status_label.setText("PulseAudio is not available on this system.")
+            return
+
+        try:
+            result = subprocess.run(
+                [pactl, "list", "short", "sinks"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            
+            self.speaker_combo.blockSignals(True)
+            self.speaker_combo.clear()
+            
+            if result.returncode == 0 and result.stdout.strip():
+                default_sink = self.get_default_sink()
+                sink_index = 0
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        sink_name = parts[1]
+                        # Extract a friendly name from the sink
+                        friendly_name = self.get_sink_friendly_name(sink_name)
+                        self.speaker_combo.addItem(friendly_name, sink_name)
+                        if sink_name == default_sink:
+                            self.speaker_combo.setCurrentIndex(sink_index)
+                        sink_index += 1
+                
+                if sink_index > 0:
+                    self.speaker_status_label.setText(f"Found {sink_index} audio output device(s).")
+                else:
+                    self.speaker_status_label.setText("No audio output devices found.")
+            else:
+                self.speaker_status_label.setText("No audio output devices found.")
+            
+            self.speaker_combo.blockSignals(False)
+            
+        except Exception as e:
+            logging.error(f"Error loading speakers: {e}")
+            self.speaker_status_label.setText(f"Error loading audio devices: {e}")
+
+    def get_default_sink(self):
+        """Get the current default audio sink"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return ""
+        
+        try:
+            result = subprocess.run(
+                [pactl, "get-default-sink"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return ""
+
+    def get_sink_friendly_name(self, sink_name):
+        """Extract a friendly name from sink name"""
+        # Try to get detailed info for better naming
+        pactl = shutil.which("pactl")
+        if pactl:
+            try:
+                result = subprocess.run(
+                    [pactl, "list", "sinks"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    # Parse the output to find description
+                    lines = result.stdout.split('\n')
+                    in_sink = False
+                    for line in lines:
+                        if sink_name in line and 'Name:' in line:
+                            in_sink = True
+                        elif in_sink and 'Description:' in line:
+                            desc = line.split('Description:')[1].strip()
+                            return desc
+                        elif in_sink and line.strip() == '':
+                            break
+            except Exception:
+                pass
+        
+        # Fallback: use the sink name with better formatting
+        return sink_name.replace('_', ' ').replace('.', ' ')
+
+    def refresh_speakers(self):
+        """Refresh the list of audio output devices"""
+        self.speaker_status_label.setText("Refreshing audio devices...")
+        self.load_speakers()
+
+    def set_default_speaker(self):
+        """Set the selected speaker as default"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            self.speaker_status_label.setText("PulseAudio is not available on this system.")
+            return
+
+        selected_sink = self.speaker_combo.currentData()
+        if not selected_sink:
+            self.speaker_status_label.setText("Please select an audio output device first.")
+            return
+
+        try:
+            result = subprocess.run(
+                [pactl, "set-default-sink", selected_sink],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                self.speaker_status_label.setText(f"Successfully set {self.speaker_combo.currentText()} as default.")
+                # Move existing audio streams to new sink
+                self.move_sink_inputs(selected_sink)
+            else:
+                self.speaker_status_label.setText(f"Failed to set default: {result.stderr.strip()}")
+        except Exception as e:
+            logging.error(f"Error setting default sink: {e}")
+            self.speaker_status_label.setText(f"Error: {e}")
+
+    def move_sink_inputs(self, sink_name):
+        """Move all active audio streams to the new sink"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return
+
+        try:
+            result = subprocess.run(
+                [pactl, "list", "short", "sink-inputs"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if parts:
+                        input_id = parts[0]
+                        subprocess.run(
+                            [pactl, "move-sink-input", input_id, sink_name],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=5
+                        )
+        except Exception:
+            logging.exception("Failed to move sink inputs")
+
+
+class SettingsDialog(QDialog):
     def __init__(
         self,
         username_text="",
         auto_launch=None,
         app_options=None,
-        wifi_networks=None,
-        current_wifi="",
-        wifi_refresh_callback=None,
-        wifi_connect_callback=None,
-        bluetooth_devices=None,
-        current_bluetooth="",
-        bluetooth_refresh_callback=None,
-        bluetooth_connect_callback=None,
         update_callback=None,
         parent=None,
     ):
@@ -1779,18 +2413,7 @@ class SettingsDialog(QDialog):
 
         auto_launch = auto_launch or {}
         app_options = app_options or []
-        wifi_networks = wifi_networks or []
-        self.wifi_refresh_callback = wifi_refresh_callback
-        self.wifi_connect_callback = wifi_connect_callback
-        self.bluetooth_refresh_callback = bluetooth_refresh_callback
-        self.bluetooth_connect_callback = bluetooth_connect_callback
         self.update_callback = update_callback
-        self._wifi_scan_in_progress = False
-        self._wifi_has_loaded = bool(wifi_networks or current_wifi)
-        self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)
-        self._bluetooth_scan_in_progress = False
-        self._bluetooth_has_loaded = bool(bluetooth_devices or current_bluetooth)
-        self.bluetooth_scan_finished.connect(self.handle_bluetooth_scan_finished)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
@@ -1809,8 +2432,6 @@ class SettingsDialog(QDialog):
         for section_id, label in (
             ("auto", "Auto Open"),
             ("remote", "Remote Login"),
-            ("wifi", "Wi-Fi"),
-            ("bluetooth", "Bluetooth"),
             ("update", "Update"),
         ):
             button = QPushButton(label)
@@ -1911,92 +2532,6 @@ class SettingsDialog(QDialog):
         helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
         remote_layout.addWidget(helper)
 
-        wifi_panel = QWidget()
-        wifi_layout = QVBoxLayout(wifi_panel)
-        wifi_layout.setContentsMargins(0, 0, 0, 0)
-        wifi_layout.setSpacing(metrics["dialog_spacing"])
-
-        wifi_title = QLabel("Wi-Fi")
-        wifi_title.setObjectName("dialogSection")
-        wifi_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
-        wifi_layout.addWidget(wifi_title)
-
-        wifi_subtitle = QLabel("Scan for nearby networks, enter a password if needed, and connect without leaving LinuxTV.")
-        wifi_subtitle.setObjectName("dialogSubtitle")
-        wifi_subtitle.setWordWrap(True)
-        wifi_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
-        wifi_layout.addWidget(wifi_subtitle)
-
-        self.wifi_combo = QComboBox()
-        self.wifi_combo.setEditable(True)
-        self.wifi_combo.setMinimumHeight(metrics["input_min_height"] + 2)
-        self._style_settings_combo_popup(self.wifi_combo)
-        self.wifi_combo.lineEdit().setPlaceholderText("Select or type a Wi-Fi network name")
-        wifi_layout.addWidget(self.wifi_combo)
-
-        self.wifi_password_input = QLineEdit()
-        self.wifi_password_input.setPlaceholderText("Wi-Fi password")
-        self.wifi_password_input.setEchoMode(QLineEdit.Password)
-        self.wifi_password_input.setMinimumHeight(metrics["input_min_height"] + 2)
-        wifi_layout.addWidget(self.wifi_password_input)
-
-        wifi_button_row = QHBoxLayout()
-        self.refresh_wifi_button = QPushButton("Refresh Networks")
-        self.refresh_wifi_button.setProperty("tileVariant", "dialogSecondary")
-        self.refresh_wifi_button.clicked.connect(self.refresh_wifi_networks)
-        wifi_button_row.addWidget(self.refresh_wifi_button)
-
-        self.connect_wifi_button = QPushButton("Connect Wi-Fi")
-        self.connect_wifi_button.setProperty("tileVariant", "accent")
-        self.connect_wifi_button.clicked.connect(self.connect_wifi)
-        wifi_button_row.addWidget(self.connect_wifi_button)
-        wifi_layout.addLayout(wifi_button_row)
-
-        self.wifi_status_label = QLabel("")
-        self.wifi_status_label.setObjectName("dialogStatus")
-        self.wifi_status_label.setWordWrap(True)
-        wifi_layout.addWidget(self.wifi_status_label)
-
-        bluetooth_panel = QWidget()
-        bluetooth_layout = QVBoxLayout(bluetooth_panel)
-        bluetooth_layout.setContentsMargins(0, 0, 0, 0)
-        bluetooth_layout.setSpacing(metrics["dialog_spacing"])
-
-        bluetooth_title = QLabel("Bluetooth")
-        bluetooth_title.setObjectName("dialogSection")
-        bluetooth_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
-        bluetooth_layout.addWidget(bluetooth_title)
-
-        bluetooth_subtitle = QLabel("Scan for nearby Bluetooth devices and connect without leaving LinuxTV.")
-        bluetooth_subtitle.setObjectName("dialogSubtitle")
-        bluetooth_subtitle.setWordWrap(True)
-        bluetooth_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
-        bluetooth_layout.addWidget(bluetooth_subtitle)
-
-        self.bluetooth_combo = QComboBox()
-        self.bluetooth_combo.setEditable(True)
-        self.bluetooth_combo.setMinimumHeight(metrics["input_min_height"] + 2)
-        self._style_settings_combo_popup(self.bluetooth_combo)
-        self.bluetooth_combo.lineEdit().setPlaceholderText("Select or type a Bluetooth device or MAC address")
-        bluetooth_layout.addWidget(self.bluetooth_combo)
-
-        bluetooth_button_row = QHBoxLayout()
-        self.refresh_bluetooth_button = QPushButton("Refresh Devices")
-        self.refresh_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
-        self.refresh_bluetooth_button.clicked.connect(self.refresh_bluetooth_devices)
-        bluetooth_button_row.addWidget(self.refresh_bluetooth_button)
-
-        self.connect_bluetooth_button = QPushButton("Connect Device")
-        self.connect_bluetooth_button.setProperty("tileVariant", "accent")
-        self.connect_bluetooth_button.clicked.connect(self.connect_bluetooth)
-        bluetooth_button_row.addWidget(self.connect_bluetooth_button)
-        bluetooth_layout.addLayout(bluetooth_button_row)
-
-        self.bluetooth_status_label = QLabel("")
-        self.bluetooth_status_label.setObjectName("dialogStatus")
-        self.bluetooth_status_label.setWordWrap(True)
-        bluetooth_layout.addWidget(self.bluetooth_status_label)
-
         update_panel = QWidget()
         update_layout = QVBoxLayout(update_panel)
         update_layout.setContentsMargins(0, 0, 0, 0)
@@ -2026,8 +2561,6 @@ class SettingsDialog(QDialog):
         for section_id, panel in (
             ("auto", auto_panel),
             ("remote", remote_panel),
-            ("wifi", wifi_panel),
-            ("bluetooth", bluetooth_panel),
             ("update", update_panel),
         ):
             self.section_panels[section_id] = panel
@@ -2047,15 +2580,6 @@ class SettingsDialog(QDialog):
         button_row.addWidget(save_button)
 
         layout.addLayout(button_row)
-        self.set_wifi_networks(wifi_networks, current_wifi)
-        self.set_wifi_loading_state(False)
-        if not self._wifi_has_loaded and self.wifi_refresh_callback:
-            self.wifi_status_label.setText("Open this section to fetch nearby Wi-Fi networks.")
-
-        self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
-        self.set_bluetooth_loading_state(False)
-        if not self._bluetooth_has_loaded and self.bluetooth_refresh_callback:
-            self.bluetooth_status_label.setText("Open this section to fetch nearby Bluetooth devices.")
 
         self.setStyleSheet(dialog_stylesheet(metrics))
         self.show_section("auto")
@@ -2082,190 +2606,6 @@ class SettingsDialog(QDialog):
             button.setProperty("tileVariant", "accent" if key == section_id else "dialogSecondary")
             button.style().unpolish(button)
             button.style().polish(button)
-        if section_id == "wifi":
-            QTimer.singleShot(0, self.ensure_wifi_networks_loaded)
-        elif section_id == "bluetooth":
-            QTimer.singleShot(0, self.ensure_bluetooth_devices_loaded)
-
-    def set_wifi_loading_state(self, loading: bool, message=""):
-        self._wifi_scan_in_progress = loading
-        self.refresh_wifi_button.setEnabled(not loading and bool(self.wifi_refresh_callback))
-        self.connect_wifi_button.setEnabled(not loading and bool(self.wifi_connect_callback))
-        if loading and message:
-            self.wifi_status_label.setText(message)
-
-    def ensure_wifi_networks_loaded(self, force=False):
-        if not self.wifi_refresh_callback:
-            self.set_wifi_loading_state(False)
-            self.wifi_status_label.setText("Wi-Fi scanning is not available on this system.")
-            return
-        if self._wifi_scan_in_progress:
-            return
-        if self._wifi_has_loaded and not force:
-            return
-        status_text = "Refreshing Wi-Fi networks..." if force else "Fetching nearby Wi-Fi networks..."
-        self.set_wifi_loading_state(True, status_text)
-        threading.Thread(
-            target=self._run_wifi_scan,
-            name="wifi-settings-scan",
-            daemon=True,
-        ).start()
-
-    def _run_wifi_scan(self):
-        try:
-            networks, current_wifi, message = self.wifi_refresh_callback()
-        except Exception as exc:
-            logging.exception("Failed to refresh Wi-Fi networks from settings")
-            networks, current_wifi, message = [], "", f"Could not scan for Wi-Fi networks: {exc}"
-        self.wifi_scan_finished.emit(networks, current_wifi, message)
-
-    def handle_wifi_scan_finished(self, wifi_networks, current_wifi, message):
-        self.set_wifi_loading_state(False)
-        self._wifi_has_loaded = True
-        self.set_wifi_networks(wifi_networks or [], current_wifi)
-        if message:
-            self.wifi_status_label.setText(message)
-
-    def set_wifi_networks(self, wifi_networks, current_wifi=""):
-        current_text = self.wifi_combo.currentText().strip()
-        self.wifi_combo.blockSignals(True)
-        self.wifi_combo.clear()
-        selected_index = -1
-        for index, option in enumerate(wifi_networks):
-            label = option.get("label", option.get("ssid", ""))
-            ssid = option.get("ssid", "")
-            self.wifi_combo.addItem(label, dict(option))
-            if current_wifi and ssid == current_wifi:
-                selected_index = index
-        self.wifi_combo.blockSignals(False)
-
-        if selected_index >= 0:
-            self.wifi_combo.setCurrentIndex(selected_index)
-            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
-            return
-
-        if current_text:
-            self.wifi_combo.setEditText(current_text)
-        elif current_wifi:
-            self.wifi_combo.setEditText(current_wifi)
-            self.wifi_status_label.setText(f"Connected network: {current_wifi}")
-        elif wifi_networks:
-            self.wifi_combo.setCurrentIndex(0)
-            self.wifi_status_label.setText("Choose a network and connect from here.")
-        else:
-            self.wifi_combo.setEditText("")
-            self.wifi_status_label.setText("No Wi-Fi networks loaded yet. Open or refresh this section to scan.")
-
-    def refresh_wifi_networks(self):
-        self.ensure_wifi_networks_loaded(force=True)
-
-    def connect_wifi(self):
-        if self._wifi_scan_in_progress:
-            self.wifi_status_label.setText("Still fetching nearby Wi-Fi networks. Try again in a moment.")
-            return
-        if not self.wifi_connect_callback:
-            self.wifi_status_label.setText("Wi-Fi connection is not available on this system.")
-            return
-        selected_network = self.wifi_combo.currentData()
-        if not isinstance(selected_network, dict):
-            selected_network = {"ssid": self.wifi_combo.currentText().strip(), "security": ""}
-        password = self.wifi_password_input.text()
-        success, message, current_wifi = self.wifi_connect_callback(selected_network, password)
-        if current_wifi:
-            self.refresh_wifi_networks()
-        self.wifi_status_label.setText(message)
-        if success:
-            self.wifi_password_input.clear()
-
-    def set_bluetooth_loading_state(self, loading: bool, message=""):
-        self._bluetooth_scan_in_progress = loading
-        self.refresh_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_refresh_callback))
-        self.connect_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_connect_callback))
-        if loading and message:
-            self.bluetooth_status_label.setText(message)
-
-    def ensure_bluetooth_devices_loaded(self, force=False):
-        if not self.bluetooth_refresh_callback:
-            self.set_bluetooth_loading_state(False)
-            self.bluetooth_status_label.setText("Bluetooth scanning is not available on this system.")
-            return
-        if self._bluetooth_scan_in_progress:
-            return
-        if self._bluetooth_has_loaded and not force:
-            return
-        status_text = "Refreshing Bluetooth devices..." if force else "Fetching nearby Bluetooth devices..."
-        self.set_bluetooth_loading_state(True, status_text)
-        import threading
-        threading.Thread(
-            target=self._run_bluetooth_scan,
-            name="bluetooth-settings-scan",
-            daemon=True,
-        ).start()
-
-    def _run_bluetooth_scan(self):
-        import logging
-        try:
-            devices, current_bluetooth, message = self.bluetooth_refresh_callback()
-        except Exception as exc:
-            logging.exception("Failed to refresh Bluetooth devices from settings")
-            devices, current_bluetooth, message = [], "", f"Could not scan for Bluetooth devices: {exc}"
-        self.bluetooth_scan_finished.emit(devices, current_bluetooth, message)
-
-    def handle_bluetooth_scan_finished(self, bluetooth_devices, current_bluetooth, message):
-        self.set_bluetooth_loading_state(False)
-        self._bluetooth_has_loaded = True
-        self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
-        if message:
-            self.bluetooth_status_label.setText(message)
-
-    def set_bluetooth_devices(self, bluetooth_devices, current_bluetooth=""):
-        current_text = self.bluetooth_combo.currentText().strip()
-        self.bluetooth_combo.blockSignals(True)
-        self.bluetooth_combo.clear()
-        selected_index = -1
-        for index, option in enumerate(bluetooth_devices):
-            label = option.get("label", option.get("name", ""))
-            mac = option.get("mac", "")
-            self.bluetooth_combo.addItem(label, dict(option))
-            if current_bluetooth and mac == current_bluetooth:
-                selected_index = index
-        self.bluetooth_combo.blockSignals(False)
-
-        if selected_index >= 0:
-            self.bluetooth_combo.setCurrentIndex(selected_index)
-            self.bluetooth_status_label.setText(f"Connected device: {current_bluetooth}")
-            return
-
-        if current_text:
-            self.bluetooth_combo.setEditText(current_text)
-        elif current_bluetooth:
-            self.bluetooth_combo.setEditText(current_bluetooth)
-            self.bluetooth_status_label.setText(f"Connected device: {current_bluetooth}")
-        elif bluetooth_devices:
-            self.bluetooth_combo.setCurrentIndex(0)
-            self.bluetooth_status_label.setText("Choose a device and connect from here.")
-        else:
-            self.bluetooth_combo.setEditText("")
-            self.bluetooth_status_label.setText("No Bluetooth devices loaded yet. Open or refresh this section to scan.")
-
-    def refresh_bluetooth_devices(self):
-        self.ensure_bluetooth_devices_loaded(force=True)
-
-    def connect_bluetooth(self):
-        if self._bluetooth_scan_in_progress:
-            self.bluetooth_status_label.setText("Still fetching nearby Bluetooth devices. Try again in a moment.")
-            return
-        if not self.bluetooth_connect_callback:
-            self.bluetooth_status_label.setText("Bluetooth connection is not available on this system.")
-            return
-        selected_device = self.bluetooth_combo.currentData()
-        if not isinstance(selected_device, dict):
-            # If the user typed manually or its not a structured item
-            selected_device = {"mac": self.bluetooth_combo.currentText().strip()}
-        success, message, current_bluetooth = self.bluetooth_connect_callback(selected_device)
-        if current_bluetooth:
-             self.refresh_bluetooth_devices()
-        self.bluetooth_status_label.setText(message)
 
     def run_update_action(self):
         if not self.update_callback:
@@ -2611,6 +2951,39 @@ class LauncherWindow(QMainWindow):
         ip_label.setStyleSheet("color: #8b949e; padding-right: 8px;")
         hero_top_row.addWidget(ip_label)
 
+        # Network button
+        network_button = QToolButton()
+        network_button.setObjectName("networkButton")
+        network_button.setText("🌐")
+        network_button.setToolTip("Network Settings")
+        network_button.setCursor(Qt.PointingHandCursor)
+        network_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        network_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
+        network_button.clicked.connect(self.open_network_settings)
+        hero_top_row.addWidget(network_button)
+
+        # Bluetooth button
+        bluetooth_button = QToolButton()
+        bluetooth_button.setObjectName("bluetoothButton")
+        bluetooth_button.setText("ᛒ")
+        bluetooth_button.setToolTip("Bluetooth Settings")
+        bluetooth_button.setCursor(Qt.PointingHandCursor)
+        bluetooth_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        bluetooth_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
+        bluetooth_button.clicked.connect(self.open_bluetooth_settings)
+        hero_top_row.addWidget(bluetooth_button)
+
+        # Sound button
+        sound_button = QToolButton()
+        sound_button.setObjectName("soundButton")
+        sound_button.setText("🔊")
+        sound_button.setToolTip("Sound Settings")
+        sound_button.setCursor(Qt.PointingHandCursor)
+        sound_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        sound_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
+        sound_button.clicked.connect(self.open_sound_settings)
+        hero_top_row.addWidget(sound_button)
+
         # Shutdown button
         shutdown_button = QToolButton()
         shutdown_button.setObjectName("shutdownButton")
@@ -2763,6 +3136,54 @@ class LauncherWindow(QMainWindow):
             }
             QToolButton#restartButton:pressed {
                 background: rgba(210, 153, 34, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#networkButton {
+                background: transparent;
+                color: #58a6ff;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#networkButton:hover {
+                background: rgba(88, 166, 255, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #79c0ff;
+            }
+            QToolButton#networkButton:pressed {
+                background: rgba(88, 166, 255, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#bluetoothButton {
+                background: transparent;
+                color: #bc8cff;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#bluetoothButton:hover {
+                background: rgba(188, 140, 255, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #d2a8ff;
+            }
+            QToolButton#bluetoothButton:pressed {
+                background: rgba(188, 140, 255, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#soundButton {
+                background: transparent;
+                color: #3fb950;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#soundButton:hover {
+                background: rgba(63, 185, 80, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #56d364;
+            }
+            QToolButton#soundButton:pressed {
+                background: rgba(63, 185, 80, 0.25);
                 border-radius: __SETTINGS_RADIUS__px;
             }
             QLabel#heroTitle {
@@ -3422,14 +3843,6 @@ class LauncherWindow(QMainWindow):
             auth.get("username", ""),
             auto_launch,
             self.get_auto_launch_options(),
-            [],
-            "",
-            self.scan_wifi_networks,
-            self.connect_to_wifi,
-            [],
-            "",
-            self.scan_bluetooth_devices,
-            self.connect_to_bluetooth,
             self.update_from_github,
             self,
         )
@@ -3482,6 +3895,33 @@ class LauncherWindow(QMainWindow):
             QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is enabled for LinuxTV Remote.")
         else:
             QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is disabled.")
+
+    def open_network_settings(self):
+        """Open the Network settings dialog"""
+        dialog = NetworkDialog(
+            [],
+            "",
+            self.scan_wifi_networks,
+            self.connect_to_wifi,
+            self,
+        )
+        dialog.exec()
+
+    def open_bluetooth_settings(self):
+        """Open the Bluetooth settings dialog"""
+        dialog = BluetoothDialog(
+            [],
+            "",
+            self.scan_bluetooth_devices,
+            self.connect_to_bluetooth,
+            self,
+        )
+        dialog.exec()
+
+    def open_sound_settings(self):
+        """Open the Sound settings dialog"""
+        dialog = SoundDialog(self)
+        dialog.exec()
 
     def scan_wifi_networks(self):
         nmcli = shutil.which("nmcli")
