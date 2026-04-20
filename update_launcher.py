@@ -1,7 +1,8 @@
 import sys
+from pathlib import Path
 
 def modify_launcher():
-    path = "/home/guru/Dev/LinuxTV/linuxtvdesktop/launcher.py"
+    path = Path(__file__).parent / "linuxtvdesktop" / "launcher.py"
     with open(path, "r") as f:
         content = f.read()
 

@@ -11,6 +11,7 @@ import os
 import queue
 import signal
 import shlex
+import secrets
 import shutil
 import subprocess
 import sys
@@ -156,7 +157,13 @@ DEFAULT_CONFIG = {
     ],
     "auth": {
         "username": "",
-        "password_hash": "",
+        "password_hash": "",  # PBKDF2 hash for storage
+        "password_salt": "",  # Salt for PBKDF2
+        "password_simple_hash": "",  # SHA-256 of raw password for challenge-response
+    },
+    "websocket": {
+        "host": "0.0.0.0",
+        "port": 8765,
     },
     "auto_launch": {
         "app_kind": "",
@@ -646,8 +653,18 @@ def normalize_config(config):
     return normalized
 
 
-def hash_remote_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def hash_remote_password(password: str, salt: str = None) -> tuple:
+    """Hash password with PBKDF2-HMAC-SHA256 and random salt.
+    Returns (password_hash, salt) tuple."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    password_hash = hashlib.pbkdf2_hmac(
+        'sha256',
+        password.encode('utf-8'),
+        salt.encode('utf-8'),
+        100000  # iterations
+    ).hex()
+    return password_hash, salt
 
 
 def remote_auth_enabled(config) -> bool:
@@ -659,9 +676,20 @@ def verify_remote_credentials(config, username: str, password: str) -> bool:
     auth = config.get("auth", {})
     expected_user = auth.get("username", "").strip()
     expected_hash = auth.get("password_hash", "").strip()
+    salt = auth.get("password_salt", "").strip()
+    
     if not expected_user or not expected_hash:
         return True
-    return username.strip() == expected_user and hash_remote_password(password) == expected_hash
+    
+    # If salt exists, use PBKDF2 verification
+    if salt:
+        computed_hash, _ = hash_remote_password(password, salt)
+        return username.strip() == expected_user and computed_hash == expected_hash
+    
+    # Legacy fallback: old SHA-256 without salt (insecure, but allows migration)
+    logging.warning("Legacy password hash detected without salt. Please update password for better security.")
+    legacy_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return username.strip() == expected_user and legacy_hash == expected_hash
 
 
 def save_config(path: Path, config) -> None:
@@ -1132,14 +1160,17 @@ class InputDeviceGrabber(threading.Thread):
 
 
 class WebSocketControlServer(threading.Thread):
-    def __init__(self, window, host="0.0.0.0", port=8765):
+    def __init__(self, window, host=None, port=8765):
         super().__init__(daemon=True)
         self.window = window
-        self.host = host
+        # Default to 0.0.0.0 to allow remote connections, allow override via config
+        config_host = window.config.get("websocket", {}).get("host", "0.0.0.0")
+        self.host = host if host is not None else config_host
         self.port = port
         self.loop = None
         self.server = None
         self._stop_event = threading.Event()
+        self._auth_nonces = {}  # Track nonces for challenge-response auth
 
     async def handler(self, websocket, path=None):
         logging.info("WebSocket connection from %s", websocket.remote_address)
@@ -1165,6 +1196,7 @@ class WebSocketControlServer(threading.Thread):
                     message_type = ""
 
                 if message_type == "auth":
+                    # Legacy authentication (kept for backward compatibility)
                     username = str(payload.get("username", ""))
                     password = str(payload.get("password", ""))
                     if verify_remote_credentials(self.window.config, username, password):
@@ -1179,6 +1211,63 @@ class WebSocketControlServer(threading.Thread):
                         }))
                     else:
                         await websocket.send(json.dumps({"status": "auth_error", "error": "invalid credentials"}))
+                    continue
+
+                if message_type == "auth_challenge":
+                    # Send random nonce for challenge-response authentication
+                    nonce = secrets.token_hex(16)
+                    self._auth_nonces[websocket] = nonce
+                    await websocket.send(json.dumps({
+                        "type": "auth_challenge",
+                        "nonce": nonce
+                    }))
+                    continue
+
+                if message_type == "auth_response":
+                    # Verify challenge-response using SHA-256 of raw password
+                    nonce = self._auth_nonces.get(websocket)
+                    if not nonce:
+                        await websocket.send(json.dumps({"status": "auth_error", "error": "no challenge issued"}))
+                        continue
+                    
+                    username = str(payload.get("username", ""))
+                    response_hash = str(payload.get("response", ""))
+                    
+                    auth = self.window.config.get("auth", {})
+                    stored_password_hash = auth.get("password_hash", "")
+                    salt = auth.get("password_salt", "")
+                    simple_hash = auth.get("password_simple_hash", "")
+                    stored_username = auth.get("username", "")
+                    
+                    logging.info("Auth attempt: user=%s, has_simple_hash=%s", username, bool(simple_hash))
+                    
+                    # Client computes: SHA-256(SHA-256(raw_password):nonce)
+                    # Server verifies using stored simple_hash (SHA-256 of raw password)
+                    if simple_hash:
+                        expected = hashlib.sha256(f"{simple_hash}:{nonce}".encode()).hexdigest()
+                        logging.info("Challenge verification: nonce=%s, expected=%s, got=%s", 
+                                   nonce[:8] + "...", expected[:16] + "...", response_hash[:16] + "...")
+                    else:
+                        # No simple hash stored (old config), challenge-response won't work
+                        logging.warning("No password_simple_hash in config, challenge-response disabled")
+                        expected = None
+                    
+                    if username == stored_username and expected and response_hash == expected:
+                        authenticated = True
+                        await websocket.send(json.dumps({"status": "auth_ok"}))
+                        # Send apps list after successful authentication
+                        apps_list = self.window.get_installed_apps()
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "apps_list",
+                            "apps": apps_list
+                        }))
+                    else:
+                        await websocket.send(json.dumps({"status": "auth_error", "error": "invalid credentials"}))
+                    
+                    # Clean up nonce
+                    if websocket in self._auth_nonces:
+                        del self._auth_nonces[websocket]
                     continue
 
                 if not authenticated:
@@ -2829,26 +2918,29 @@ class LauncherWindow(QMainWindow):
         """Get the current WiFi SSID"""
         import subprocess
         try:
-            # Use the exact command: nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2
+            nmcli = shutil.which("nmcli")
+            if not nmcli:
+                return ""
+            
+            # Get active WiFi connections
             result = subprocess.run(
-                "nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2",
-                shell=True,
+                [nmcli, "-t", "-f", "active,ssid", "dev", "wifi"],
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=5
             )
-            if result.returncode == 0 and result.stdout.strip():
-                ssid = result.stdout.strip()
-                import logging
-                logging.info(f"WiFi SSID found: {ssid}")
-                return ssid
             
-            import logging
+            if result.returncode == 0 and result.stdout:
+                for line in result.stdout.splitlines():
+                    if line.startswith("yes:"):
+                        ssid = line.split(":", 1)[1]
+                        logging.info(f"WiFi SSID found: {ssid}")
+                        return ssid
+            
             logging.info("No WiFi SSID found")
             return ""
         except Exception as e:
-            import logging
             logging.error(f"Error getting WiFi SSID: {e}")
             return ""
     
@@ -2856,38 +2948,44 @@ class LauncherWindow(QMainWindow):
         """Check if current connection is via WiFi"""
         import subprocess
         try:
+            nmcli = shutil.which("nmcli")
+            if not nmcli:
+                return False
+            
             # Check if we have an active WiFi connection
             result = subprocess.run(
-                "nmcli -t -f active,ssid dev wifi | grep '^yes' | cut -d: -f2",
-                shell=True,
+                [nmcli, "-t", "-f", "active,ssid", "dev", "wifi"],
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=5
             )
-            is_wifi = result.returncode == 0 and result.stdout.strip()
-            import logging
-            logging.info(f"is_wifi_connection result: {is_wifi}, output: '{result.stdout.strip()}'")
+            
+            is_wifi = False
+            if result.returncode == 0 and result.stdout:
+                for line in result.stdout.splitlines():
+                    if line.startswith("yes:"):
+                        is_wifi = True
+                        break
+            
+            logging.info(f"is_wifi_connection result: {is_wifi}")
             return is_wifi
         except Exception as e:
-            import logging
             logging.error(f"Error checking WiFi connection: {e}")
             return False
 
     def shutdown_system(self):
         """Shutdown the system"""
-        import subprocess
         try:
-            subprocess.run(["sudo", "shutdown", "now"], check=False)
+            request_system_power_action("SHUTDOWN")
         except Exception as e:
             logging.error(f"Failed to shutdown: {e}")
             QMessageBox.critical(self, "Error", f"Failed to shutdown: {e}")
 
     def restart_system(self):
         """Restart the system"""
-        import subprocess
         try:
-            subprocess.run(["sudo", "reboot"], check=False)
+            request_system_power_action("REBOOT")
         except Exception as e:
             logging.error(f"Failed to restart: {e}")
             QMessageBox.critical(self, "Error", f"Failed to restart: {e}")
@@ -3876,9 +3974,15 @@ class LauncherWindow(QMainWindow):
             if password != confirm_password:
                 QMessageBox.information(self, "Password Mismatch", "The passwords do not match.")
                 return
+            # Generate PBKDF2 hash for secure storage
+            password_hash, password_salt = hash_remote_password(password)
+            # Generate simple SHA-256 hash for challenge-response authentication
+            password_simple_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
             self.config["auth"] = {
                 "username": username,
-                "password_hash": hash_remote_password(password),
+                "password_hash": password_hash,
+                "password_salt": password_salt,
+                "password_simple_hash": password_simple_hash,
             }
         else:
             self.config["auth"] = dict(DEFAULT_CONFIG["auth"])
