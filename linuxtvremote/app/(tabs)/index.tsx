@@ -279,6 +279,29 @@ export default function RemoteScreen() {
     return `http://${host}:${kodiTargetPort}/jsonrpc`;
   };
 
+  const getKodiImageUrl = (system: SavedSystem | null, thumbnail: string) => {
+    if (!thumbnail) return '';
+    const host = system?.ipAddress || 'localhost';
+    const kodiTargetPort = system?.kodiPort?.trim() || DEFAULT_KODI_PORT;
+    
+    // Remove "image://" prefix if present
+    let imagePath = thumbnail;
+    if (imagePath.startsWith('image://')) {
+      imagePath = imagePath.replace('image://', '');
+    }
+    
+    // Build URL with embedded credentials for React Native Image
+    const kodiUser = system?.kodiUsername?.trim() || '';
+    const kodiPass = system?.kodiPassword || '';
+    
+    let baseUrl = `http://${host}:${kodiTargetPort}`;
+    if (kodiUser || kodiPass) {
+      baseUrl = `http://${encodeURIComponent(kodiUser)}:${encodeURIComponent(kodiPass)}@${host}:${kodiTargetPort}`;
+    }
+    
+    return `${baseUrl}/image/${encodeURIComponent(imagePath)}`;
+  };
+
   const openKodiAuthModal = () => {
     setKodiAuthPort(activeSystem?.kodiPort ?? DEFAULT_KODI_PORT);
     setKodiAuthUsername(activeSystem?.kodiUsername ?? '');
@@ -740,6 +763,8 @@ export default function RemoteScreen() {
       const kodiSystem = systemOverride ?? activeSystem;
       const kodiGroup = groupOverride ?? selectedKodiGroup;
       const kodiUrl = getKodiUrl(kodiSystem);
+      const kodiHost = kodiSystem?.ipAddress || 'localhost';
+      const kodiPort = kodiSystem?.kodiPort?.trim() || DEFAULT_KODI_PORT;
       
       const payload = {
         jsonrpc: '2.0',
@@ -768,39 +793,7 @@ export default function RemoteScreen() {
       
       const data = await response.json();
       const channels = (data?.result?.channels || []) as KodiChannel[];
-      
-      // Process thumbnails to create proper URLs
-      const kodiHost = kodiSystem?.ipAddress || 'localhost';
-      const kodiPort = kodiSystem?.kodiPort?.trim() || DEFAULT_KODI_PORT;
-      const processedChannels = channels.map(channel => {
-        let thumbnailUrl = channel.thumbnail;
-        if (thumbnailUrl) {
-          console.log('Original thumbnail:', thumbnailUrl);
-          // Kodi returns paths like "image://path/to/thumb.jpg" or just paths
-          // We need to convert them to HTTP URLs
-          if (thumbnailUrl.startsWith('image://')) {
-            // Remove image:// prefix and URL encode the path
-            const imagePath = thumbnailUrl.replace('image://', '');
-            thumbnailUrl = `http://${kodiHost}:${kodiPort}/image/${encodeURIComponent(imagePath)}`;
-          } else if (thumbnailUrl && !thumbnailUrl.startsWith('http')) {
-            // If it's a path but not starting with http, make it a URL
-            thumbnailUrl = `http://${kodiHost}:${kodiPort}/image/${encodeURIComponent(thumbnailUrl)}`;
-          }
-          // Add auth headers to the URL if needed
-          const kodiUser = kodiSystem?.kodiUsername?.trim();
-          const kodiPass = kodiSystem?.kodiPassword;
-          if (kodiUser || kodiPass) {
-            const authString = `${kodiUser || ''}:${kodiPass || ''}`;
-            const encodedAuth = encodeBase64(authString);
-            // Insert credentials into URL
-            thumbnailUrl = thumbnailUrl.replace('http://', `http://${encodedAuth}@`);
-          }
-          console.log('Processed thumbnail URL:', thumbnailUrl);
-        }
-        return { ...channel, thumbnail: thumbnailUrl };
-      });
-      
-      setKodiChannels(processedChannels);
+      setKodiChannels(channels);
       
       if (channels.length === 0) {
         setKodiError(
@@ -2145,11 +2138,15 @@ export default function RemoteScreen() {
                           <View style={styles.channelIconContainer}>
                             {channel.thumbnail ? (
                               <RNImage 
-                                source={{ uri: channel.thumbnail }} 
+                                source={{ 
+                                  uri: getKodiImageUrl(activeSystem, channel.thumbnail),
+                                }} 
                                 style={styles.channelThumbnailImage}
                                 resizeMode="cover"
                                 onError={(e) => {
-                                  console.log('Failed to load thumbnail:', channel.thumbnail);
+                                  console.log('Failed to load thumbnail:', channel.label);
+                                  const thumbUrl = channel.thumbnail ? getKodiImageUrl(activeSystem, channel.thumbnail) : 'no thumbnail';
+                                  console.log('URL:', thumbUrl);
                                   console.log('Error:', e.nativeEvent.error);
                                 }}
                               />
