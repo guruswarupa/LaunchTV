@@ -149,25 +149,37 @@ if command -v xrandr >/dev/null 2>&1; then
   fi
 fi
 
-# Prefer HDMI audio output when available.
+# Initialize audio output - respect user's default device selection
 if command -v pactl >/dev/null 2>&1; then
+  echo "[\$(date)] Initializing audio system..."
+  
+  # Check if a default sink is already set
+  CURRENT_DEFAULT=\$(pactl get-default-sink 2>/dev/null || echo "")
+  
+  if [ -z "\$CURRENT_DEFAULT" ]; then
+    # No default set, try to use HDMI if available
+    HDMI_SINK=\$(pactl list short sinks 2>/dev/null | awk '/hdmi|HDMI/ {print \$2; exit}')
+    if [ -n "\$HDMI_SINK" ]; then
+      echo "[\$(date)] No default audio device set. Setting HDMI as default: \$HDMI_SINK"
+      pactl set-default-sink "\$HDMI_SINK" || true
+    else
+      # Use first available sink
+      FIRST_SINK=\$(pactl list short sinks 2>/dev/null | awk '{print \$2; exit}')
+      if [ -n "\$FIRST_SINK" ]; then
+        echo "[\$(date)] Setting first available audio device as default: \$FIRST_SINK"
+        pactl set-default-sink "\$FIRST_SINK" || true
+      fi
+    fi
+  else
+    echo "[\$(date)] Audio default already set to: \$CURRENT_DEFAULT - preserving user preference"
+  fi
+  
+  # Set HDMI card profile if available (but don't override default sink)
   HDMI_CARD=\$(pactl list cards short 2>/dev/null | awk '/hdmi|HDMI/ {print \$2; exit}')
   if [ -n "\$HDMI_CARD" ]; then
-    echo "[\$(date)] Switching audio card to HDMI profile: \$HDMI_CARD"
+    echo "[\$(date)] Configuring HDMI audio card profile: \$HDMI_CARD"
     pactl set-card-profile "\$HDMI_CARD" output:hdmi-stereo 2>/dev/null || \
     pactl set-card-profile "\$HDMI_CARD" output:hdmi-stereo-extra1 2>/dev/null || true
-    sleep 1
-  fi
-
-  HDMI_SINK=\$(pactl list short sinks 2>/dev/null | awk '/hdmi|HDMI/ {print \$2; exit}')
-  if [ -n "\$HDMI_SINK" ]; then
-    echo "[\$(date)] Switching audio to HDMI sink: \$HDMI_SINK"
-    pactl set-default-sink "\$HDMI_SINK" || true
-    pactl list short sink-inputs 2>/dev/null | while read -r input_id _; do
-      [ -n "\$input_id" ] && pactl move-sink-input "\$input_id" "\$HDMI_SINK" || true
-    done
-  else
-    echo "[\$(date)] No HDMI audio sink detected; leaving audio output unchanged"
   fi
 fi
 

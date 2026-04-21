@@ -1549,10 +1549,10 @@ class TileButton(QPushButton):
             painter.setPen(Qt.NoPen)
             
             ripple_rect = QRect(
-                self.ripple_pos.x() - self.ripple_radius,
-                self.ripple_pos.y() - self.ripple_radius,
-                self.ripple_radius * 2,
-                self.ripple_radius * 2
+                int(self.ripple_pos.x() - self.ripple_radius),
+                int(self.ripple_pos.y() - self.ripple_radius),
+                int(self.ripple_radius * 2),
+                int(self.ripple_radius * 2)
             )
             painter.drawEllipse(ripple_rect)
             painter.end()
@@ -2074,6 +2074,7 @@ class BluetoothDialog(QDialog):
         current_bluetooth="",
         bluetooth_refresh_callback=None,
         bluetooth_connect_callback=None,
+        bluetooth_remove_callback=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -2086,6 +2087,7 @@ class BluetoothDialog(QDialog):
         bluetooth_devices = bluetooth_devices or []
         self.bluetooth_refresh_callback = bluetooth_refresh_callback
         self.bluetooth_connect_callback = bluetooth_connect_callback
+        self.bluetooth_remove_callback = bluetooth_remove_callback
         self._bluetooth_scan_in_progress = False
         self._bluetooth_has_loaded = bool(bluetooth_devices or current_bluetooth)
         self.bluetooth_scan_finished.connect(self.handle_bluetooth_scan_finished)
@@ -2127,6 +2129,11 @@ class BluetoothDialog(QDialog):
         self.refresh_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
         self.refresh_bluetooth_button.clicked.connect(self.refresh_bluetooth_devices)
         bluetooth_button_row.addWidget(self.refresh_bluetooth_button)
+
+        self.remove_bluetooth_button = QPushButton("Remove Device")
+        self.remove_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
+        self.remove_bluetooth_button.clicked.connect(self.remove_bluetooth)
+        bluetooth_button_row.addWidget(self.remove_bluetooth_button)
 
         self.connect_bluetooth_button = QPushButton("Connect Device")
         self.connect_bluetooth_button.setProperty("tileVariant", "accent")
@@ -2174,6 +2181,7 @@ class BluetoothDialog(QDialog):
         self._bluetooth_scan_in_progress = loading
         self.refresh_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_refresh_callback))
         self.connect_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_connect_callback))
+        self.remove_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_remove_callback))
         if loading and message:
             self.bluetooth_status_label.setText(message)
 
@@ -2256,6 +2264,32 @@ class BluetoothDialog(QDialog):
         if current_bluetooth:
              self.refresh_bluetooth_devices()
         self.bluetooth_status_label.setText(message)
+
+    def remove_bluetooth(self):
+        """Remove/unpair a Bluetooth device."""
+        if self._bluetooth_scan_in_progress:
+            self.bluetooth_status_label.setText("Still fetching nearby Bluetooth devices. Try again in a moment.")
+            return
+        if not self.bluetooth_connect_callback:
+            self.bluetooth_status_label.setText("Bluetooth connection is not available on this system.")
+            return
+        selected_device = self.bluetooth_combo.currentData()
+        if not isinstance(selected_device, dict):
+            selected_device = {"mac": self.bluetooth_combo.currentText().strip()}
+        
+        mac = selected_device.get("mac", "").strip()
+        if not mac:
+            self.bluetooth_status_label.setText("Select a device to remove.")
+            return
+        
+        # Call the remove callback
+        if hasattr(self, 'bluetooth_remove_callback') and self.bluetooth_remove_callback:
+            success, message = self.bluetooth_remove_callback(selected_device)
+            if success:
+                self.refresh_bluetooth_devices()
+            self.bluetooth_status_label.setText(message)
+        else:
+            self.bluetooth_status_label.setText("Remove function not available.")
 
 
 class SoundDialog(QDialog):
@@ -2459,6 +2493,9 @@ class SoundDialog(QDialog):
             return
 
         try:
+            import logging
+            logging.info(f"Setting default audio sink to: {selected_sink}")
+            
             result = subprocess.run(
                 [pactl, "set-default-sink", selected_sink],
                 capture_output=True,
@@ -2468,21 +2505,34 @@ class SoundDialog(QDialog):
             )
             
             if result.returncode == 0:
-                self.speaker_status_label.setText(f"Successfully set {self.speaker_combo.currentText()} as default.")
                 # Move existing audio streams to new sink
-                self.move_sink_inputs(selected_sink)
+                streams_moved = self.move_sink_inputs(selected_sink)
+                
+                friendly_name = self.speaker_combo.currentText()
+                if streams_moved > 0:
+                    self.speaker_status_label.setText(
+                        f"Set {friendly_name} as default and moved {streams_moved} audio stream(s)."
+                    )
+                else:
+                    self.speaker_status_label.setText(
+                        f"Set {friendly_name} as default. New audio will play through this device."
+                    )
+                logging.info(f"Successfully set default sink to: {selected_sink}")
             else:
-                self.speaker_status_label.setText(f"Failed to set default: {result.stderr.strip()}")
+                error_msg = (result.stderr or result.stdout or "Unknown error").strip()
+                self.speaker_status_label.setText(f"Failed to set default: {error_msg}")
+                logging.error(f"Failed to set default sink: {error_msg}")
         except Exception as e:
             logging.error(f"Error setting default sink: {e}")
             self.speaker_status_label.setText(f"Error: {e}")
 
     def move_sink_inputs(self, sink_name):
-        """Move all active audio streams to the new sink"""
+        """Move all active audio streams to the new sink. Returns count of moved streams."""
         pactl = shutil.which("pactl")
         if not pactl:
-            return
+            return 0
 
+        moved_count = 0
         try:
             result = subprocess.run(
                 [pactl, "list", "short", "sink-inputs"],
@@ -2497,15 +2547,21 @@ class SoundDialog(QDialog):
                     parts = line.split()
                     if parts:
                         input_id = parts[0]
-                        subprocess.run(
+                        move_result = subprocess.run(
                             [pactl, "move-sink-input", input_id, sink_name],
                             capture_output=True,
                             text=True,
                             check=False,
                             timeout=5
                         )
+                        if move_result.returncode == 0:
+                            moved_count += 1
+                            import logging
+                            logging.info(f"Moved audio stream {input_id} to {sink_name}")
         except Exception:
             logging.exception("Failed to move sink inputs")
+        
+        return moved_count
 
 
 class SettingsDialog(QDialog):
@@ -4019,6 +4075,7 @@ class LauncherWindow(QMainWindow):
             "",
             self.scan_bluetooth_devices,
             self.connect_to_bluetooth,
+            self.remove_bluetooth_device,
             self,
         )
         dialog.exec()
@@ -4532,22 +4589,10 @@ class LauncherWindow(QMainWindow):
             return False, "bluetoothctl is not installed on this device.", ""
             
         try:
-            # First try to pair to avoid pairing prompts hanging connection
-            subprocess.run([bluetoothctl, "pair", mac], capture_output=True, text=True, check=False, timeout=15)
-            # Then connect
-            result = subprocess.run(
-                [bluetoothctl, "connect", mac],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=20,
-            )
-            if result.returncode == 0 and "Connection successful" in result.stdout:
-                return True, f"Connected to {mac}.", mac
-            elif result.returncode == 0 and result.stdout.strip() == "": # Some versions might not output
-                pass
+            import logging
+            logging.info(f"Attempting to connect to Bluetooth device: {mac}")
             
-            # Check info if connected
+            # Step 1: Check if device is already paired
             info_res = subprocess.run(
                 [bluetoothctl, "info", mac],
                 capture_output=True,
@@ -4555,17 +4600,151 @@ class LauncherWindow(QMainWindow):
                 check=False,
                 timeout=5,
             )
+            
+            is_paired = "Paired: yes" in info_res.stdout
+            is_connected = "Connected: yes" in info_res.stdout
+            
+            if is_connected:
+                return True, f"Already connected to {mac}.", mac
+            
+            # Step 2: If not paired, pair first with better error handling
+            if not is_paired:
+                logging.info(f"Device {mac} is not paired. Attempting to pair...")
+                pair_result = subprocess.run(
+                    [bluetoothctl, "pair", mac],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,  # Increased timeout for pairing
+                )
+                
+                pair_output = (pair_result.stdout or "") + (pair_result.stderr or "")
+                logging.info(f"Pair result: {pair_output}")
+                
+                # Check if pairing was successful
+                if "Pairing successful" not in pair_output and pair_result.returncode != 0:
+                    # Pairing failed
+                    error_msg = (pair_result.stderr or pair_result.stdout or "Unknown pairing error").strip()
+                    return False, f"Pairing failed for {mac}: {error_msg[-200:]}", ""
+            
+            # Step 3: Trust the device (important for automatic reconnection)
+            logging.info(f"Trusting device {mac}...")
+            trust_result = subprocess.run(
+                [bluetoothctl, "trust", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            trust_output = (trust_result.stdout or "") + (trust_result.stderr or "")
+            logging.info(f"Trust result: {trust_output}")
+            
+            # Step 4: Connect to the device
+            logging.info(f"Connecting to device {mac}...")
+            connect_result = subprocess.run(
+                [bluetoothctl, "connect", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,  # Increased timeout for connection
+            )
+            
+            connect_output = (connect_result.stdout or "") + (connect_result.stderr or "")
+            logging.info(f"Connect result: {connect_output}")
+            
+            # Check if connection was successful
+            if "Connection successful" in connect_output:
+                return True, f"Connected to {mac}.", mac
+            
+            # Verify connection status
+            info_res = subprocess.run(
+                [bluetoothctl, "info", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            
             if "Connected: yes" in info_res.stdout:
                 return True, f"Connected to {mac}.", mac
             
-            # If we reach here, connection failed but result is defined
-            message = (result.stderr or result.stdout or "Unknown error").strip()
-            return False, f"Could not connect to {mac}: {message[-100:]}", ""
+            # If we reach here, connection failed
+            # Extract meaningful error message
+            error_msg = connect_output.strip()
+            if "br-connection-unknown" in error_msg:
+                error_msg = "Connection failed with unknown error. Try: 1) Remove the device and pair again, 2) Make sure the device is in pairing mode, 3) Check if the device is connected to another system."
+            elif "Failed to connect" in error_msg:
+                # Extract the specific error
+                import re
+                error_match = re.search(r'Failed to connect:.*?([\w-]+)$', error_msg, re.MULTILINE)
+                if error_match:
+                    specific_error = error_match.group(1)
+                    error_msg = f"Connection failed: {specific_error}. Make sure the device is discoverable and try again."
+            
+            return False, f"Could not connect to {mac}: {error_msg[-300:]}", ""
                 
         except Exception as exc:
             import logging
             logging.exception("Failed to connect to Bluetooth")
             return False, f"Could not connect to {mac}: {exc}", ""
+
+    def remove_bluetooth_device(self, device_info):
+        """Remove/unpair a Bluetooth device."""
+        if isinstance(device_info, dict):
+            mac = str(device_info.get("mac", "")).strip()
+        else:
+            mac = str(device_info or "").strip()
+        if not mac:
+            return False, "Select a device to remove."
+
+        bluetoothctl = shutil.which("bluetoothctl")
+        if not bluetoothctl:
+            return False, "bluetoothctl is not installed on this device."
+            
+        try:
+            import logging
+            logging.info(f"Attempting to remove Bluetooth device: {mac}")
+            
+            # First, disconnect if connected
+            subprocess.run(
+                [bluetoothctl, "disconnect", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            
+            # Remove trust
+            subprocess.run(
+                [bluetoothctl, "untrust", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            
+            # Remove the device
+            remove_result = subprocess.run(
+                [bluetoothctl, "remove", mac],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            
+            remove_output = (remove_result.stdout or "") + (remove_result.stderr or "")
+            logging.info(f"Remove result: {remove_output}")
+            
+            if "Device has been removed" in remove_output or remove_result.returncode == 0:
+                return True, f"Removed device {mac}."
+            else:
+                error_msg = (remove_result.stderr or remove_result.stdout or "Unknown error").strip()
+                return False, f"Failed to remove {mac}: {error_msg[-200:]}"
+                
+        except Exception as exc:
+            import logging
+            logging.exception("Failed to remove Bluetooth device")
+            return False, f"Could not remove {mac}: {exc}"
 
     def update_from_github(self):
         git = shutil.which("git")
@@ -5548,18 +5727,12 @@ class LauncherWindow(QMainWindow):
             # Drop out of the way so the launched app receives focus/input.
             self.hide()
             self.clear_remote_target_window_cache()
-            switch_audio_to_hdmi()
+            # Respect user's default audio device - don't force HDMI
             geometry = self.get_target_geometry()
             self.active_process = subprocess.Popen(command, start_new_session=True)
             self.active_process_kind = kind
             self.active_process_name = item.get("name")
-            self.active_audio_stop_event = threading.Event()
-            self.active_audio_thread = threading.Thread(
-                target=maintain_hdmi_audio,
-                args=(self.active_audio_stop_event,),
-                daemon=True,
-            )
-            self.active_audio_thread.start()
+            # No longer forcing HDMI audio - user's default sink will be used
             if kind == "native":
                 self.active_fullscreen_stop_event = threading.Event()
                 self.active_fullscreen_thread = threading.Thread(
