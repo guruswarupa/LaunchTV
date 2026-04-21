@@ -28,6 +28,16 @@ export type RepositoryState = {
   lastMessage: string;
   status: ConnectionState;
   appsList?: Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>;
+  wifiNetworks?: Array<{ssid: string; label: string; security?: string; signal?: number}>;
+  currentWifi?: string;
+  wifiMessage?: string;
+  bluetoothDevices?: Array<{mac: string; name: string; label: string; connected?: boolean; paired?: boolean}>;
+  currentBluetooth?: string;
+  bluetoothMessage?: string;
+  soundSpeakers?: Array<{name: string; label: string}>;
+  defaultSink?: string;
+  soundMessage?: string;
+  addAppsMessage?: string;
 };
 
 export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click';
@@ -42,6 +52,7 @@ export interface RemoteRepository {
   sendPointerEvent(event: PointerEventType, payload?: { dx?: number; dy?: number }): void;
   sendSpecialKey(key: SpecialKey): void;
   sendText(text: string): void;
+  sendSettingsRequest(type: string, payload?: Record<string, any>): void;
   addApp(app: { type: string; name: string; command?: string; url?: string }): void;
   removeApp(appId: string): void;
 }
@@ -129,6 +140,13 @@ export class DemoRepository implements RemoteRepository {
     this.emit({
       lastAction: 'Typed text',
       lastMessage: `Demo text sent: ${text}`,
+    });
+  }
+
+  sendSettingsRequest(type: string, payload?: Record<string, any>) {
+    this.emit({
+      lastAction: 'Settings Request',
+      lastMessage: `Demo settings request: ${type}`,
     });
   }
 
@@ -402,6 +420,10 @@ export class RealServerRepository implements RemoteRepository {
     this.sendPayload({ type: 'text', text }, 'Typed text');
   }
 
+  sendSettingsRequest(type: string, payload?: Record<string, any>) {
+    this.sendPayload({ type, ...payload }, `Settings: ${type}`);
+  }
+
   addApp(app: { type: string; name: string; command?: string; url?: string }) {
     const payload = {
       type: 'add_app',
@@ -552,6 +574,15 @@ export class RealServerRepository implements RemoteRepository {
         nonce?: string;
         status?: string;
         type?: string;
+        networks?: Array<{ssid: string; label: string; security?: string; signal?: number}>;
+        current_wifi?: string;
+        message?: string;
+        devices?: Array<{mac: string; name: string; label: string; connected?: boolean; paired?: boolean}>;
+        current_bluetooth?: string;
+        speakers?: Array<{name: string; label: string}>;
+        default_sink?: string;
+        success?: boolean;
+        sink?: string;
       };
 
       // Handle auth challenge from server
@@ -646,6 +677,86 @@ export class RealServerRepository implements RemoteRepository {
           this.emit({
             lastAction: keyLabel,
             lastMessage: `Sent ${payload.key ?? 'key'}`,
+          });
+          return;
+        }
+
+        // Handle WiFi list response
+        if (payload.type === 'wifi_list') {
+          this.emit({
+            wifiNetworks: payload.networks || [],
+            currentWifi: payload.current_wifi || '',
+            wifiMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle WiFi connect response
+        if (payload.type === 'wifi_connected') {
+          this.emit({
+            wifiMessage: payload.message || '',
+            currentWifi: payload.current_wifi || '',
+          });
+          return;
+        }
+
+        // Handle Bluetooth list response
+        if (payload.type === 'bluetooth_list') {
+          this.emit({
+            bluetoothDevices: payload.devices || [],
+            currentBluetooth: payload.current_bluetooth || '',
+            bluetoothMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle Bluetooth connect response
+        if (payload.type === 'bluetooth_connected') {
+          this.emit({
+            bluetoothMessage: payload.message || '',
+            currentBluetooth: payload.current_bluetooth || '',
+          });
+          return;
+        }
+
+        // Handle Bluetooth remove response
+        if (payload.type === 'bluetooth_removed') {
+          this.emit({
+            bluetoothMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle Sound list response
+        if (payload.type === 'sound_list') {
+          this.emit({
+            soundSpeakers: payload.speakers || [],
+            defaultSink: payload.default_sink || '',
+            soundMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle Sound set response
+        if (payload.type === 'sound_set') {
+          this.emit({
+            soundMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle Add App response
+        if (payload.type === 'app_added') {
+          this.emit({
+            addAppsMessage: payload.message || '',
+          });
+          return;
+        }
+
+        // Handle Remove App response
+        if (payload.type === 'app_removed') {
+          this.emit({
+            addAppsMessage: payload.message || '',
           });
           return;
         }

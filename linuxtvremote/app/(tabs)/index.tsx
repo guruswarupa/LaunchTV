@@ -5,6 +5,7 @@ import {
   Alert,
   AppState,
   AppStateStatus,
+  Image as RNImage,
   Modal,
   PanResponder,
   Pressable,
@@ -197,6 +198,27 @@ export default function RemoteScreen() {
   const [repositoryState, setRepositoryState] = useState<ScreenRepositoryState>(
     DEFAULT_REPOSITORY_STATE
   );
+  const [isWifiVisible, setIsWifiVisible] = useState(false);
+  const [isBluetoothVisible, setIsBluetoothVisible] = useState(false);
+  const [isSoundVisible, setIsSoundVisible] = useState(false);
+  const [wifiNetworks, setWifiNetworks] = useState<{ssid: string; label: string; security?: string; signal?: number}[]>([]);
+  const [currentWifi, setCurrentWifi] = useState('');
+  const [wifiPassword, setWifiPassword] = useState('');
+  const [wifiLoading, setWifiLoading] = useState(false);
+  const [wifiMessage, setWifiMessage] = useState('');
+  const [bluetoothDevices, setBluetoothDevices] = useState<{mac: string; name: string; label: string; connected?: boolean; paired?: boolean}[]>([]);
+  const [currentBluetooth, setCurrentBluetooth] = useState('');
+  const [bluetoothLoading, setBluetoothLoading] = useState(false);
+  const [bluetoothMessage, setBluetoothMessage] = useState('');
+  const [soundSpeakers, setSoundSpeakers] = useState<{name: string; label: string}[]>([]);
+  const [defaultSink, setDefaultSink] = useState('');
+  const [soundLoading, setSoundLoading] = useState(false);
+  const [soundMessage, setSoundMessage] = useState('');
+  const [availableApps, setAvailableApps] = useState<Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>>([]);
+  const [addAppsLoading, setAddAppsLoading] = useState(false);
+  const [addAppsMessage, setAddAppsMessage] = useState('');
+  const [addAppMode, setAddAppMode] = useState<'custom' | 'recommended' | null>(null);
+  const [selectedWifiNetwork, setSelectedWifiNetwork] = useState<{ssid: string; security: string} | null>(null);
   const repositoryRef = useRef<RemoteRepository | null>(null);
   const repeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -506,6 +528,117 @@ export default function RemoteScreen() {
 
   const sendAction = (action: string) => {
     repositoryRef.current?.sendAction(action);
+  };
+
+  const sendSettingsRequest = (type: string, payload: Record<string, any> = {}) => {
+    repositoryRef.current?.sendSettingsRequest(type, payload);
+  };
+
+  // WiFi handlers
+  const fetchWifiNetworks = () => {
+    setWifiLoading(true);
+    setWifiMessage('');
+    setSelectedWifiNetwork(null);
+    sendSettingsRequest('get_wifi');
+  };
+
+  const selectWifiNetwork = (ssid: string, security: string) => {
+    setSelectedWifiNetwork({ ssid, security });
+    if (!security || security.toLowerCase() === 'open') {
+      // Connect immediately for open networks
+      setWifiLoading(true);
+      setWifiMessage('Connecting...');
+      sendSettingsRequest('connect_wifi', { ssid, password: '', security });
+    } else {
+      setWifiPassword('');
+      setWifiMessage(`Enter password for ${ssid}`);
+    }
+  };
+
+  const connectToSelectedWifi = () => {
+    if (!selectedWifiNetwork) {
+      setWifiMessage('Please select a network first.');
+      return;
+    }
+    if (selectedWifiNetwork.security && selectedWifiNetwork.security.toLowerCase() !== 'open' && !wifiPassword) {
+      setWifiMessage('Please enter the Wi-Fi password.');
+      return;
+    }
+    setWifiLoading(true);
+    setWifiMessage('Connecting...');
+    sendSettingsRequest('connect_wifi', { 
+      ssid: selectedWifiNetwork.ssid, 
+      password: wifiPassword, 
+      security: selectedWifiNetwork.security 
+    });
+  };
+
+  // Bluetooth handlers
+  const fetchBluetoothDevices = () => {
+    setBluetoothLoading(true);
+    setBluetoothMessage('');
+    sendSettingsRequest('get_bluetooth');
+  };
+
+  const connectToBluetooth = (mac: string) => {
+    if (!mac) {
+      setBluetoothMessage('Please select a device.');
+      return;
+    }
+    setBluetoothLoading(true);
+    setBluetoothMessage('Connecting...');
+    sendSettingsRequest('connect_bluetooth', { mac });
+  };
+
+  const removeBluetoothDevice = (mac: string) => {
+    if (!mac) {
+      setBluetoothMessage('Please select a device.');
+      return;
+    }
+    setBluetoothLoading(true);
+    setBluetoothMessage('Removing...');
+    sendSettingsRequest('remove_bluetooth', { mac });
+  };
+
+  // Sound handlers
+  const fetchSoundDevices = () => {
+    setSoundLoading(true);
+    setSoundMessage('');
+    sendSettingsRequest('get_sound');
+  };
+
+  const fetchAvailableApps = () => {
+    setAddAppsLoading(true);
+    setAddAppsMessage('');
+    sendAction('GET_APPS');
+  };
+
+  const addAppToSystem = (appId: string, appName: string, kind: string) => {
+    setAddAppsLoading(true);
+    setAddAppsMessage(`Adding ${appName}...`);
+    sendSettingsRequest('add_app', { id: appId, name: appName, kind });
+  };
+
+  const showCustomApp = () => {
+    setAddAppMode('custom');
+    setIsAddAppVisible(true);
+    setAvailableApps([]);
+  };
+
+  const showRecommendedApps = () => {
+    setAddAppMode('recommended');
+    setIsAddAppVisible(false);
+    fetchAvailableApps();
+  };
+
+  const setSoundDevice = (sink: string) => {
+    if (!sink) {
+      setSoundMessage('Please select an audio device.');
+      return;
+    }
+    setSoundLoading(true);
+    setSoundMessage('Setting default device...');
+    sendSettingsRequest('set_sound', { sink });
   };
 
   const launchApp = (appId: string) => {
@@ -974,6 +1107,60 @@ export default function RemoteScreen() {
   useEffect(() => {
     if (repositoryState.appsList && repositoryState.appsList.length > 0) {
       setServerApps(repositoryState.appsList);
+    }
+  }, [repositoryState.appsList]);
+
+  // Update WiFi state when repository state changes
+  useEffect(() => {
+    if (repositoryState.wifiNetworks !== undefined) {
+      setWifiNetworks(repositoryState.wifiNetworks || []);
+    }
+    if (repositoryState.currentWifi !== undefined) {
+      setCurrentWifi(repositoryState.currentWifi || '');
+    }
+    if (repositoryState.wifiMessage !== undefined) {
+      setWifiMessage(repositoryState.wifiMessage || '');
+      setWifiLoading(false);
+    }
+  }, [repositoryState.wifiNetworks, repositoryState.currentWifi, repositoryState.wifiMessage]);
+
+  // Update Bluetooth state when repository state changes
+  useEffect(() => {
+    if (repositoryState.bluetoothDevices !== undefined) {
+      setBluetoothDevices(repositoryState.bluetoothDevices || []);
+    }
+    if (repositoryState.currentBluetooth !== undefined) {
+      setCurrentBluetooth(repositoryState.currentBluetooth || '');
+    }
+    if (repositoryState.bluetoothMessage !== undefined) {
+      setBluetoothMessage(repositoryState.bluetoothMessage || '');
+      setBluetoothLoading(false);
+    }
+  }, [repositoryState.bluetoothDevices, repositoryState.currentBluetooth, repositoryState.bluetoothMessage]);
+
+  // Update Sound state when repository state changes
+  useEffect(() => {
+    if (repositoryState.soundSpeakers !== undefined) {
+      setSoundSpeakers(repositoryState.soundSpeakers || []);
+    }
+    if (repositoryState.defaultSink !== undefined) {
+      setDefaultSink(repositoryState.defaultSink || '');
+    }
+    if (repositoryState.soundMessage !== undefined) {
+      setSoundMessage(repositoryState.soundMessage || '');
+      setSoundLoading(false);
+    }
+    if (repositoryState.addAppsMessage !== undefined) {
+      setAddAppsMessage(repositoryState.addAppsMessage || '');
+      setAddAppsLoading(false);
+    }
+  }, [repositoryState.soundSpeakers, repositoryState.defaultSink, repositoryState.soundMessage, repositoryState.addAppsMessage]);
+
+  // Update available apps when repository state changes
+  useEffect(() => {
+    if (repositoryState.appsList && repositoryState.appsList.length > 0) {
+      setAvailableApps(repositoryState.appsList);
+      setAddAppsLoading(false);
     }
   }, [repositoryState.appsList]);
 
@@ -1462,86 +1649,254 @@ export default function RemoteScreen() {
                 <View style={styles.appsContainer}>
                   <View style={styles.appsHeader}>
                     <Text style={styles.appsTitle}>Apps</Text>
-                    <View style={styles.appsHeaderButtons}>
-                      <Pressable
-                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
-                        onPress={() => setIsAddAppVisible(!isAddAppVisible)}>
-                        <Ionicons name="add-circle" size={20} color="#3fb950" />
-                      </Pressable>
-                      <Pressable
-                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
-                        onPress={fetchApps}>
-                        <Ionicons name="refresh" size={20} color="#58a6ff" />
-                      </Pressable>
-                    </View>
+                    <Pressable
+                      style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                      onPress={fetchApps}>
+                      <Ionicons name="refresh" size={20} color="#58a6ff" />
+                    </Pressable>
                   </View>
                   <Text style={styles.appsSubtitle}>Tap an app to launch it on LinuxTV</Text>
                   
-                  {isAddAppVisible && (
-                    <View style={styles.addAppForm}>
-                      <Text style={styles.addAppTitle}>Add New App</Text>
-                      
-                      <TextInput
-                        style={styles.appInput}
-                        placeholder="App Name"
-                        placeholderTextColor="#8b949e"
-                        value={newAppName}
-                        onChangeText={setNewAppName}
-                      />
-                      
-                      <View style={styles.appTypeSelector}>
-                        <Pressable
-                          style={[styles.appTypeButton, newAppType === 'native' && styles.appTypeButtonActive]}
-                          onPress={() => setNewAppType('native')}>
-                          <Ionicons name="desktop" size={16} color={newAppType === 'native' ? '#58a6ff' : '#8b949e'} />
-                          <Text style={[styles.appTypeText, newAppType === 'native' && styles.appTypeTextActive]}>
-                            Native
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.appTypeButton, newAppType === 'web' && styles.appTypeButtonActive]}
-                          onPress={() => setNewAppType('web')}>
-                          <Ionicons name="globe" size={16} color={newAppType === 'web' ? '#58a6ff' : '#8b949e'} />
-                          <Text style={[styles.appTypeText, newAppType === 'web' && styles.appTypeTextActive]}>
-                            Web
-                          </Text>
-                        </Pressable>
-                      </View>
-                      
-                      {newAppType === 'native' ? (
-                        <TextInput
-                          style={styles.appInput}
-                          placeholder="Command (e.g., vlc, firefox)"
-                          placeholderTextColor="#8b949e"
-                          value={newAppCommand}
-                          onChangeText={setNewAppCommand}
+                  {/* Add App Card */}
+                  <View style={styles.addAppCard}>
+                    <Text style={styles.addAppCardTitle}>Add New App</Text>
+                    <View style={styles.addAppChoiceButtons}>
+                      <Pressable
+                        style={[
+                          styles.addAppChoiceButton,
+                          addAppMode === 'custom' && styles.addAppChoiceButtonActive,
+                        ]}
+                        onPress={showCustomApp}>
+                        <Ionicons 
+                          name="create-outline" 
+                          size={20} 
+                          color={addAppMode === 'custom' ? '#58a6ff' : '#8b949e'} 
                         />
-                      ) : (
-                        <TextInput
-                          style={styles.appInput}
-                          placeholder="URL (e.g., https://youtube.com)"
-                          placeholderTextColor="#8b949e"
-                          value={newAppUrl}
-                          onChangeText={setNewAppUrl}
-                          keyboardType="url"
-                          autoCapitalize="none"
+                        <Text style={[
+                          styles.addAppChoiceButtonText,
+                          addAppMode === 'custom' && styles.addAppChoiceButtonTextActive,
+                        ]}>
+                          Custom
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[
+                          styles.addAppChoiceButton,
+                          addAppMode === 'recommended' && styles.addAppChoiceButtonActive,
+                        ]}
+                        onPress={showRecommendedApps}>
+                        <Ionicons 
+                          name="star-outline" 
+                          size={20} 
+                          color={addAppMode === 'recommended' ? '#58a6ff' : '#8b949e'} 
                         />
-                      )}
-                      
-                      <View style={styles.addAppButtons}>
-                        <Pressable
-                          style={[styles.addAppActionButton, styles.cancelButton]}
-                          onPress={() => setIsAddAppVisible(false)}>
-                          <Text style={styles.cancelButtonText}>Cancel</Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.addAppActionButton, styles.saveButton]}
-                          onPress={addNewApp}>
-                          <Text style={styles.saveButtonText}>Add App</Text>
-                        </Pressable>
-                      </View>
+                        <Text style={[
+                          styles.addAppChoiceButtonText,
+                          addAppMode === 'recommended' && styles.addAppChoiceButtonTextActive,
+                        ]}>
+                          Recommended
+                        </Text>
+                      </Pressable>
                     </View>
-                  )}
+                    
+                    {/* Custom App Form */}
+                    {isAddAppVisible && addAppMode === 'custom' && (
+                      <View style={styles.addAppForm}>
+                        <TextInput
+                          style={styles.appInput}
+                          placeholder="App Name"
+                          placeholderTextColor="#8b949e"
+                          value={newAppName}
+                          onChangeText={setNewAppName}
+                        />
+                        
+                        <View style={styles.appTypeSelector}>
+                          <Pressable
+                            style={[styles.appTypeButton, newAppType === 'native' && styles.appTypeButtonActive]}
+                            onPress={() => setNewAppType('native')}>
+                            <Ionicons name="desktop" size={16} color={newAppType === 'native' ? '#58a6ff' : '#8b949e'} />
+                            <Text style={[styles.appTypeText, newAppType === 'native' && styles.appTypeTextActive]}>
+                              Native
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.appTypeButton, newAppType === 'web' && styles.appTypeButtonActive]}
+                            onPress={() => setNewAppType('web')}>
+                            <Ionicons name="globe" size={16} color={newAppType === 'web' ? '#58a6ff' : '#8b949e'} />
+                            <Text style={[styles.appTypeText, newAppType === 'web' && styles.appTypeTextActive]}>
+                              Web
+                            </Text>
+                          </Pressable>
+                        </View>
+                        
+                        {newAppType === 'native' ? (
+                          <TextInput
+                            style={styles.appInput}
+                            placeholder="Command (e.g., vlc, firefox)"
+                            placeholderTextColor="#8b949e"
+                            value={newAppCommand}
+                            onChangeText={setNewAppCommand}
+                          />
+                        ) : (
+                          <TextInput
+                            style={styles.appInput}
+                            placeholder="URL (e.g., https://youtube.com)"
+                            placeholderTextColor="#8b949e"
+                            value={newAppUrl}
+                            onChangeText={setNewAppUrl}
+                            keyboardType="url"
+                            autoCapitalize="none"
+                          />
+                        )}
+                        
+                        <View style={styles.addAppButtons}>
+                          <Pressable
+                            style={[styles.addAppActionButton, styles.cancelButton]}
+                            onPress={() => { setIsAddAppVisible(false); setAddAppMode(null); }}>
+                            <Text style={styles.cancelButtonText}>Cancel</Text>
+                          </Pressable>
+                          <Pressable
+                            style={[styles.addAppActionButton, styles.saveButton]}
+                            onPress={addNewApp}>
+                            <Text style={styles.saveButtonText}>Add App</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                    
+                    {/* Recommended Apps */}
+                    {addAppMode === 'recommended' && (
+                      <View style={styles.recommendedAppsContainer}>
+                        {addAppsLoading ? (
+                          <View style={styles.settingsLoading}>
+                            <Ionicons name="sync" size={32} color="#58a6ff" />
+                            <Text style={styles.settingsLoadingText}>Loading apps...</Text>
+                          </View>
+                        ) : (
+                          <>
+                            {/* Available to Add */}
+                            {availableApps.filter(app => !serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
+                              <>
+                                <Text style={styles.recommendedSectionTitle}>Available to Add</Text>
+                                {availableApps
+                                  .filter(app => !serverApps.some(serverApp => serverApp.id === app.id))
+                                  .map((app) => (
+                                    <Pressable
+                                      key={app.id}
+                                      style={styles.appItem}
+                                      onPress={() => addAppToSystem(app.id, app.name, app.kind || 'native')}>
+                                      <View style={styles.appItemLeft}>
+                                        {app.icon ? (
+                                          <RNImage 
+                                            source={{ uri: app.icon }} 
+                                            style={styles.appItemIcon}
+                                            resizeMode="contain"
+                                          />
+                                        ) : (
+                                          <Ionicons 
+                                            name={app.kind === 'web' ? 'globe-outline' : 'desktop-outline'} 
+                                            size={20} 
+                                            color="#58a6ff" 
+                                          />
+                                        )}
+                                        <View style={styles.appItemText}>
+                                          <Text style={styles.appName}>{app.name}</Text>
+                                          <Text style={styles.appCategory}>{app.category || (app.kind === 'web' ? 'Web App' : 'Native App')}</Text>
+                                        </View>
+                                      </View>
+                                      <Ionicons name="add-circle-outline" size={20} color="#3fb950" />
+                                    </Pressable>
+                                  ))}
+                              </>
+                            )}
+                            
+                            {/* Already Added */}
+                            {availableApps.filter(app => serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
+                              <>
+                                <Text style={styles.recommendedSectionTitle}>Already Added</Text>
+                                {availableApps
+                                  .filter(app => serverApps.some(serverApp => serverApp.id === app.id))
+                                  .map((app) => (
+                                    <Pressable
+                                      key={`added-${app.id}`}
+                                      style={[styles.appItem, styles.appItemAdded]}>
+                                      <View style={styles.appItemLeft}>
+                                        {app.icon ? (
+                                          <RNImage 
+                                            source={{ uri: app.icon }} 
+                                            style={styles.appItemIcon}
+                                            resizeMode="contain"
+                                          />
+                                        ) : (
+                                          <Ionicons 
+                                            name={app.kind === 'web' ? 'globe-outline' : 'desktop-outline'} 
+                                            size={20} 
+                                            color="#3fb950" 
+                                          />
+                                        )}
+                                        <View style={styles.appItemText}>
+                                          <Text style={styles.appName}>{app.name}</Text>
+                                          <Text style={styles.appCategory}>{app.category || (app.kind === 'web' ? 'Web App' : 'Native App')}</Text>
+                                        </View>
+                                      </View>
+                                      <Pressable
+                                        style={styles.appRemoveButton}
+                                        onPress={() => {
+                                          Alert.alert(
+                                            'Remove App',
+                                            `Remove ${app.name} from launcher?`,
+                                            [
+                                              { text: 'Cancel', style: 'cancel' },
+                                              { 
+                                                text: 'Remove', 
+                                                style: 'destructive',
+                                                onPress: () => {
+                                                  setAddAppsLoading(true);
+                                                  setAddAppsMessage(`Removing ${app.name}...`);
+                                                  sendSettingsRequest('remove_app', { id: app.id });
+                                                }
+                                              },
+                                            ]
+                                          );
+                                        }}>
+                                        <Ionicons name="trash-outline" size={18} color="#f85149" />
+                                      </Pressable>
+                                    </Pressable>
+                                  ))}
+                              </>
+                            )}
+                            
+                            {availableApps.length === 0 && !addAppsLoading && (
+                              <View style={styles.settingsEmpty}>
+                                <Ionicons name="grid-outline" size={48} color="#8b949e" />
+                                <Text style={styles.settingsEmptyText}>No apps found</Text>
+                              </View>
+                            )}
+                            
+                            {availableApps.filter(app => !serverApps.some(serverApp => serverApp.id === app.id)).length === 0 && 
+                             availableApps.filter(app => serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
+                              <View style={styles.settingsEmpty}>
+                                <Ionicons name="checkmark-circle-outline" size={48} color="#3fb950" />
+                                <Text style={styles.settingsEmptyText}>All apps are already added</Text>
+                              </View>
+                            )}
+                            
+                            {addAppsMessage ? (
+                              <View style={[
+                                styles.settingsMessage,
+                                addAppsMessage.includes('added') && styles.settingsMessageSuccess,
+                                addAppsMessage.includes('already') && styles.settingsMessageSuccess,
+                                addAppsMessage.includes('removed') && styles.settingsMessageSuccess,
+                                (addAppsMessage.includes('Could not') || addAppsMessage.includes('Error')) && styles.settingsMessageError,
+                              ]}>
+                                <Text style={styles.settingsMessageText}>{addAppsMessage}</Text>
+                              </View>
+                            ) : null}
+                          </>
+                        )}
+                      </View>
+                    )}
+                  </View>
                   
                   <View style={styles.appsGrid}>
                     {/* Native Apps Section */}
@@ -1566,13 +1921,21 @@ export default function RemoteScreen() {
                                 style={styles.appCardContent}
                                 onPress={() => launchApp(app.id)}>
                                 <View style={styles.appIconContainer}>
-                                  <View style={styles.appIconCircle}>
-                                    <Ionicons 
-                                      name="desktop" 
-                                      size={28} 
-                                      color="#58a6ff" 
+                                  {app.icon ? (
+                                    <RNImage 
+                                      source={{ uri: app.icon }} 
+                                      style={styles.appIconImage}
+                                      resizeMode="contain"
                                     />
-                                  </View>
+                                  ) : (
+                                    <View style={styles.appIconCircle}>
+                                      <Ionicons 
+                                        name="desktop" 
+                                        size={28} 
+                                        color="#58a6ff" 
+                                      />
+                                    </View>
+                                  )}
                                 </View>
                                 <Text style={styles.appName}>{app.name}</Text>
                               </Pressable>
@@ -1603,13 +1966,21 @@ export default function RemoteScreen() {
                                 style={styles.appCardContent}
                                 onPress={() => launchApp(app.id)}>
                                 <View style={styles.appIconContainer}>
-                                  <View style={styles.appIconCircle}>
-                                    <Ionicons 
-                                      name="globe" 
-                                      size={28} 
-                                      color="#58a6ff" 
+                                  {app.icon ? (
+                                    <RNImage 
+                                      source={{ uri: app.icon }} 
+                                      style={styles.appIconImage}
+                                      resizeMode="contain"
                                     />
-                                  </View>
+                                  ) : (
+                                    <View style={styles.appIconCircle}>
+                                      <Ionicons 
+                                        name="globe" 
+                                        size={28} 
+                                        color="#58a6ff" 
+                                      />
+                                    </View>
+                                  )}
                                 </View>
                                 <Text style={styles.appName}>{app.name}</Text>
                               </Pressable>
@@ -1740,7 +2111,15 @@ export default function RemoteScreen() {
                           style={({ pressed }) => [styles.channelCard, pressed && styles.pressed]}
                           onPress={() => playKodiChannel(channel.channelid, channel.label)}>
                           <View style={styles.channelIconContainer}>
-                            <Ionicons name="tv" size={32} color="#58a6ff" />
+                            {channel.thumbnail ? (
+                              <RNImage 
+                                source={{ uri: channel.thumbnail }} 
+                                style={styles.channelThumbnailImage}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <Ionicons name="tv" size={32} color="#58a6ff" />
+                            )}
                           </View>
                           <View style={styles.channelInfo}>
                             <Text style={styles.channelNumber}>{channel.channelnumber}</Text>
@@ -2041,6 +2420,48 @@ export default function RemoteScreen() {
               </>
             ) : null}
 
+            {/* Device Settings */}
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                setIsMenuVisible(false);
+                setIsWifiVisible(true);
+                fetchWifiNetworks();
+              }}>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="wifi" size={20} color="#58a6ff" />
+                <Text style={styles.menuItemText}>Wi-Fi</Text>
+              </View>
+            </Pressable>
+            
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                setIsMenuVisible(false);
+                setIsBluetoothVisible(true);
+                fetchBluetoothDevices();
+              }}>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="bluetooth" size={20} color="#58a6ff" />
+                <Text style={styles.menuItemText}>Bluetooth</Text>
+              </View>
+            </Pressable>
+            
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+              onPress={() => {
+                setIsMenuVisible(false);
+                setIsSoundVisible(true);
+                fetchSoundDevices();
+              }}>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="volume-high" size={20} color="#58a6ff" />
+                <Text style={styles.menuItemText}>Sound</Text>
+              </View>
+            </Pressable>
+            
+            <View style={styles.menuDivider} />
+
             {/* Power Actions */}
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
@@ -2265,6 +2686,298 @@ export default function RemoteScreen() {
               onPress={() => setIsKodiAuthVisible(false)}>
               <Text style={styles.ghostButtonText}>Cancel</Text>
             </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* WiFi Settings Modal */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isWifiVisible}
+        onRequestClose={() => setIsWifiVisible(false)}>
+        <Pressable style={styles.settingsOverlay} onPress={() => setIsWifiVisible(false)}>
+          <Pressable style={styles.settingsSheet} onPress={() => undefined}>
+            <View style={styles.settingsHeader}>
+              <Ionicons name="wifi" size={24} color="#58a6ff" />
+              <Text style={styles.settingsTitle}>Wi-Fi Settings</Text>
+              <Pressable onPress={() => setIsWifiVisible(false)} style={styles.settingsCloseButton}>
+                <Ionicons name="close" size={24} color="#8b949e" />
+              </Pressable>
+            </View>
+            
+            <ScrollView style={styles.settingsContent}>
+              <Text style={styles.settingsSectionTitle}>Available Networks</Text>
+              
+              {wifiLoading ? (
+                <View style={styles.settingsLoading}>
+                  <Ionicons name="sync" size={32} color="#58a6ff" />
+                  <Text style={styles.settingsLoadingText}>Scanning networks...</Text>
+                </View>
+              ) : (
+                <>
+                  {wifiNetworks.map((network) => (
+                    <Pressable
+                      key={network.ssid}
+                      style={[
+                        styles.networkItem,
+                        currentWifi === network.ssid && styles.networkItemActive,
+                        selectedWifiNetwork?.ssid === network.ssid && styles.networkItemActive,
+                      ]}
+                      onPress={() => {
+                        if (currentWifi === network.ssid) {
+                          setWifiMessage(`Already connected to ${network.ssid}`);
+                        } else {
+                          selectWifiNetwork(network.ssid, network.security || '');
+                        }
+                      }}>
+                      <View style={styles.networkItemLeft}>
+                        <Ionicons 
+                          name={currentWifi === network.ssid ? "checkmark-circle" : "wifi"} 
+                          size={20} 
+                          color={currentWifi === network.ssid ? "#3fb950" : "#8b949e"} 
+                        />
+                        <View style={styles.networkItemText}>
+                          <Text style={styles.networkName}>{network.label || network.ssid}</Text>
+                          {network.security && network.security.toLowerCase() !== 'open' && (
+                            <Ionicons name="lock-closed" size={12} color="#8b949e" />
+                          )}
+                        </View>
+                      </View>
+                      {network.signal && (
+                        <Text style={styles.networkSignal}>{network.signal}%</Text>
+                      )}
+                    </Pressable>
+                  ))}
+                  
+                  {wifiNetworks.length === 0 && (
+                    <View style={styles.settingsEmpty}>
+                      <Ionicons name="wifi-outline" size={48} color="#8b949e" />
+                      <Text style={styles.settingsEmptyText}>No networks found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+              
+              {selectedWifiNetwork && selectedWifiNetwork.security && selectedWifiNetwork.security.toLowerCase() !== 'open' && (
+                <View style={styles.settingsSection}>
+                  <Text style={styles.settingsSectionTitle}>Password for {selectedWifiNetwork.ssid}</Text>
+                  <TextInput
+                    value={wifiPassword}
+                    onChangeText={setWifiPassword}
+                    placeholder="Enter Wi-Fi password"
+                    placeholderTextColor="#8b949e"
+                    secureTextEntry
+                    style={styles.settingsInput}
+                  />
+                  <Pressable
+                    style={styles.settingsActionButton}
+                    onPress={connectToSelectedWifi}>
+                    <Ionicons name="checkmark" size={20} color="#3fb950" />
+                    <Text style={styles.settingsActionButtonText}>Connect</Text>
+                  </Pressable>
+                </View>
+              )}
+              
+              {wifiMessage ? (
+                <View style={[
+                  styles.settingsMessage,
+                  wifiMessage.includes('Connected') && styles.settingsMessageSuccess,
+                  wifiMessage.includes('Could not') && styles.settingsMessageError,
+                ]}>
+                  <Text style={styles.settingsMessageText}>{wifiMessage}</Text>
+                </View>
+              ) : null}
+              
+              <Pressable
+                style={styles.settingsActionButton}
+                onPress={fetchWifiNetworks}>
+                <Ionicons name="refresh" size={20} color="#58a6ff" />
+                <Text style={styles.settingsActionButtonText}>Refresh Networks</Text>
+              </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Bluetooth Settings Modal */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isBluetoothVisible}
+        onRequestClose={() => setIsBluetoothVisible(false)}>
+        <Pressable style={styles.settingsOverlay} onPress={() => setIsBluetoothVisible(false)}>
+          <Pressable style={styles.settingsSheet} onPress={() => undefined}>
+            <View style={styles.settingsHeader}>
+              <Ionicons name="bluetooth" size={24} color="#58a6ff" />
+              <Text style={styles.settingsTitle}>Bluetooth Settings</Text>
+              <Pressable onPress={() => setIsBluetoothVisible(false)} style={styles.settingsCloseButton}>
+                <Ionicons name="close" size={24} color="#8b949e" />
+              </Pressable>
+            </View>
+            
+            <ScrollView style={styles.settingsContent}>
+              <Text style={styles.settingsSectionTitle}>Devices</Text>
+              
+              {bluetoothLoading ? (
+                <View style={styles.settingsLoading}>
+                  <Ionicons name="sync" size={32} color="#58a6ff" />
+                  <Text style={styles.settingsLoadingText}>Scanning devices...</Text>
+                </View>
+              ) : (
+                <>
+                  {bluetoothDevices.map((device) => (
+                    <View key={device.mac} style={styles.bluetoothItem}>
+                      <View style={styles.bluetoothItemLeft}>
+                        <Ionicons 
+                          name={device.connected ? "bluetooth" : "bluetooth-outline"} 
+                          size={20} 
+                          color={device.connected ? "#3fb950" : "#8b949e"} 
+                        />
+                        <View style={styles.bluetoothItemText}>
+                          <Text style={styles.bluetoothName}>{device.name || device.label}</Text>
+                          <Text style={styles.bluetoothMac}>{device.mac}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.bluetoothActions}>
+                        {!device.connected && (
+                          <Pressable
+                            style={styles.bluetoothConnectButton}
+                            onPress={() => connectToBluetooth(device.mac)}>
+                            <Text style={styles.bluetoothConnectText}>Connect</Text>
+                          </Pressable>
+                        )}
+                        {device.connected && (
+                          <Text style={styles.bluetoothConnectedText}>Connected</Text>
+                        )}
+                        <Pressable
+                          style={styles.bluetoothRemoveButton}
+                          onPress={() => {
+                            Alert.alert(
+                              'Remove Device',
+                              `Remove ${device.name}?`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                { text: 'Remove', style: 'destructive', onPress: () => removeBluetoothDevice(device.mac) },
+                              ]
+                            );
+                          }}>
+                          <Ionicons name="trash-outline" size={18} color="#f85149" />
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                  
+                  {bluetoothDevices.length === 0 && (
+                    <View style={styles.settingsEmpty}>
+                      <Ionicons name="bluetooth-outline" size={48} color="#8b949e" />
+                      <Text style={styles.settingsEmptyText}>No devices found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+              
+              {bluetoothMessage ? (
+                <View style={[
+                  styles.settingsMessage,
+                  bluetoothMessage.includes('Connected') && styles.settingsMessageSuccess,
+                  bluetoothMessage.includes('Could not') && styles.settingsMessageError,
+                ]}>
+                  <Text style={styles.settingsMessageText}>{bluetoothMessage}</Text>
+                </View>
+              ) : null}
+              
+              <Pressable
+                style={styles.settingsActionButton}
+                onPress={fetchBluetoothDevices}>
+                <Ionicons name="refresh" size={20} color="#58a6ff" />
+                <Text style={styles.settingsActionButtonText}>Refresh Devices</Text>
+              </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Sound Settings Modal */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={isSoundVisible}
+        onRequestClose={() => setIsSoundVisible(false)}>
+        <Pressable style={styles.settingsOverlay} onPress={() => setIsSoundVisible(false)}>
+          <Pressable style={styles.settingsSheet} onPress={() => undefined}>
+            <View style={styles.settingsHeader}>
+              <Ionicons name="volume-high" size={24} color="#58a6ff" />
+              <Text style={styles.settingsTitle}>Sound Settings</Text>
+              <Pressable onPress={() => setIsSoundVisible(false)} style={styles.settingsCloseButton}>
+                <Ionicons name="close" size={24} color="#8b949e" />
+              </Pressable>
+            </View>
+            
+            <ScrollView style={styles.settingsContent}>
+              <Text style={styles.settingsSectionTitle}>Audio Output Devices</Text>
+              
+              {soundLoading ? (
+                <View style={styles.settingsLoading}>
+                  <Ionicons name="sync" size={32} color="#58a6ff" />
+                  <Text style={styles.settingsLoadingText}>Loading devices...</Text>
+                </View>
+              ) : (
+                <>
+                  {soundSpeakers.map((speaker) => (
+                    <Pressable
+                      key={speaker.name}
+                      style={[
+                        styles.speakerItem,
+                        defaultSink === speaker.name && styles.speakerItemActive,
+                      ]}
+                      onPress={() => {
+                        if (defaultSink !== speaker.name) {
+                          setSoundDevice(speaker.name);
+                        }
+                      }}>
+                      <View style={styles.speakerItemLeft}>
+                        <Ionicons 
+                          name={defaultSink === speaker.name ? "volume-high" : "volume-low"} 
+                          size={20} 
+                          color={defaultSink === speaker.name ? "#3fb950" : "#8b949e"} 
+                        />
+                        <Text style={styles.speakerName}>{speaker.label}</Text>
+                      </View>
+                      {defaultSink === speaker.name && (
+                        <View style={styles.speakerActiveBadge}>
+                          <Text style={styles.speakerActiveText}>Default</Text>
+                        </View>
+                      )}
+                    </Pressable>
+                  ))}
+                  
+                  {soundSpeakers.length === 0 && (
+                    <View style={styles.settingsEmpty}>
+                      <Ionicons name="volume-mute-outline" size={48} color="#8b949e" />
+                      <Text style={styles.settingsEmptyText}>No audio devices found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+              
+              {soundMessage ? (
+                <View style={[
+                  styles.settingsMessage,
+                  soundMessage.includes('updated') && styles.settingsMessageSuccess,
+                  soundMessage.includes('Failed') && styles.settingsMessageError,
+                ]}>
+                  <Text style={styles.settingsMessageText}>{soundMessage}</Text>
+                </View>
+              ) : null}
+              
+              <Pressable
+                style={styles.settingsActionButton}
+                onPress={fetchSoundDevices}>
+                <Ionicons name="refresh" size={20} color="#58a6ff" />
+                <Text style={styles.settingsActionButtonText}>Refresh Devices</Text>
+              </Pressable>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -2540,6 +3253,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#30363d',
+  },
+  appIconImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
   },
   appName: {
     color: '#f0f6fc',
@@ -3384,5 +4102,339 @@ const styles = StyleSheet.create({
     color: '#8b949e',
     textAlign: 'center',
     paddingHorizontal: 20,
+  },
+  // Settings Modals
+  settingsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'flex-end',
+  },
+  settingsSheet: {
+    backgroundColor: '#161b22',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingBottom: 20,
+    flex: 1,
+  },
+  settingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#30363d',
+    gap: 12,
+  },
+  settingsTitle: {
+    flex: 1,
+    fontSize: 20,
+    color: '#f0f6fc',
+    fontWeight: '600',
+  },
+  settingsCloseButton: {
+    padding: 4,
+  },
+  settingsContent: {
+    padding: 20,
+    flex: 1,
+  },
+  settingsSectionTitle: {
+    fontSize: 16,
+    color: '#8b949e',
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  settingsSection: {
+    marginBottom: 20,
+  },
+  settingsLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  settingsLoadingText: {
+    fontSize: 16,
+    color: '#8b949e',
+  },
+  settingsEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  settingsEmptyText: {
+    fontSize: 16,
+    color: '#8b949e',
+  },
+  settingsInput: {
+    backgroundColor: '#0d1117',
+    color: '#f0f6fc',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  settingsMessage: {
+    backgroundColor: '#21262d',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  settingsMessageSuccess: {
+    backgroundColor: 'rgba(63, 185, 80, 0.2)',
+  },
+  settingsMessageError: {
+    backgroundColor: 'rgba(248, 81, 73, 0.2)',
+  },
+  settingsMessageText: {
+    fontSize: 14,
+    color: '#f0f6fc',
+  },
+  settingsActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#21262d',
+    padding: 14,
+    borderRadius: 8,
+    gap: 8,
+    marginTop: 12,
+  },
+  settingsActionButtonText: {
+    fontSize: 16,
+    color: '#58a6ff',
+    fontWeight: '600',
+  },
+  // WiFi
+  networkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0d1117',
+    padding: 14,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  networkItemActive: {
+    borderColor: '#3fb950',
+    backgroundColor: 'rgba(63, 185, 80, 0.1)',
+  },
+  networkItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  networkItemText: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  networkName: {
+    fontSize: 16,
+    color: '#f0f6fc',
+    fontWeight: '500',
+  },
+  networkSignal: {
+    fontSize: 14,
+    color: '#8b949e',
+  },
+  // Bluetooth
+  bluetoothItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0d1117',
+    padding: 14,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  bluetoothItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  bluetoothItemText: {
+    gap: 4,
+  },
+  bluetoothName: {
+    fontSize: 16,
+    color: '#f0f6fc',
+    fontWeight: '500',
+  },
+  bluetoothMac: {
+    fontSize: 12,
+    color: '#8b949e',
+  },
+  bluetoothActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bluetoothConnectButton: {
+    backgroundColor: '#238636',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  bluetoothConnectText: {
+    fontSize: 14,
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  bluetoothConnectedText: {
+    fontSize: 14,
+    color: '#3fb950',
+    fontWeight: '600',
+  },
+  bluetoothRemoveButton: {
+    padding: 6,
+  },
+  // Sound
+  speakerItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0d1117',
+    padding: 14,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  speakerItemActive: {
+    borderColor: '#3fb950',
+    backgroundColor: 'rgba(63, 185, 80, 0.1)',
+  },
+  speakerItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  speakerName: {
+    fontSize: 16,
+    color: '#f0f6fc',
+    fontWeight: '500',
+  },
+  speakerActiveBadge: {
+    backgroundColor: '#3fb950',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  speakerActiveText: {
+    fontSize: 12,
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  settingsSubtitle: {
+    fontSize: 14,
+    color: '#8b949e',
+    marginBottom: 16,
+  },
+  appItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#21262d',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  appItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  appItemIcon: {
+    width: 24,
+    height: 24,
+  },
+  appItemText: {
+    flex: 1,
+  },
+  recommendedAppsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  appItemAdded: {
+    backgroundColor: '#1a2332',
+    borderWidth: 1,
+    borderColor: '#3fb950',
+  },
+  appRemoveButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(248, 81, 73, 0.1)',
+  },
+  addAppCard: {
+    backgroundColor: '#161b22',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  addAppCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#f0f6fc',
+    marginBottom: 12,
+  },
+  addAppChoiceButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
+  addAppChoiceButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#21262d',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#30363d',
+  },
+  addAppChoiceButtonActive: {
+    backgroundColor: 'rgba(88, 166, 255, 0.15)',
+    borderColor: '#58a6ff',
+  },
+  addAppChoiceButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8b949e',
+  },
+  addAppChoiceButtonTextActive: {
+    color: '#58a6ff',
+  },
+  recommendedAppsContainer: {
+    marginTop: 16,
+  },
+  recommendedSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#8b949e',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  channelThumbnailImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
   },
 });

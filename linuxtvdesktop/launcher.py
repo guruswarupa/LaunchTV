@@ -3,6 +3,7 @@ import asyncio
 import configparser
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+import base64
 import hashlib
 import importlib
 import json
@@ -149,7 +150,7 @@ REMOTE_POINTER_TARGET_CACHE_SECONDS = 1.0
 DEFAULT_CONFIG = {
     "native_apps": [
         {"name": "Kodi", "cmd": "kodi", "icon": "icons/kodi.png"},
-        {"name": "Stremio", "cmd": "flatpak run com.stremio.Stremio", "icon": "icons/stremio.png"},
+        {"name": "Stremio", "cmd": "stremio", "icon": "icons/stremio.png"},
         {"name": "VLC", "cmd": "vlc", "icon": "icons/vlc.png"},
     ],
     "web_apps": [
@@ -1377,7 +1378,11 @@ class WebSocketControlServer(threading.Thread):
                     self.window.remove_app_by_id(app_id)
                     logging.info("Removed app: %s", app_id)
                     
-                    await websocket.send(json.dumps({"status": "ok", "type": "app_removed"}))
+                    await websocket.send(json.dumps({
+                        "status": "ok", 
+                        "type": "app_removed",
+                        "message": f"App removed successfully"
+                    }))
                     continue
 
                 # Handle app launch request
@@ -1387,6 +1392,179 @@ class WebSocketControlServer(threading.Thread):
                     logging.info("Launching app from remote: %s", app_id)
                     self.window.launch_app_by_id(app_id)
                     await websocket.send(json.dumps({"status": "ok", "action": "launch_app", "app_id": app_id}))
+                    continue
+
+                # Handle WiFi settings request
+                if message_type == "get_wifi":
+                    try:
+                        networks, current_wifi, message = self.window.scan_wifi_networks()
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "wifi_list",
+                            "networks": networks,
+                            "current_wifi": current_wifi,
+                            "message": message
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to scan WiFi from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "wifi_list",
+                            "message": f"Failed to scan WiFi: {exc}"
+                        }))
+                    continue
+
+                # Handle WiFi connect request
+                if message_type == "connect_wifi":
+                    ssid = str(payload.get("ssid", ""))
+                    password = str(payload.get("password", ""))
+                    security = str(payload.get("security", ""))
+                    try:
+                        success, message, current_wifi = self.window.connect_to_wifi(
+                            {"ssid": ssid, "security": security}, password
+                        )
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "wifi_connected",
+                            "success": success,
+                            "message": message,
+                            "current_wifi": current_wifi
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to connect WiFi from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "wifi_connected",
+                            "message": f"Failed to connect WiFi: {exc}"
+                        }))
+                    continue
+
+                # Handle Bluetooth settings request
+                if message_type == "get_bluetooth":
+                    try:
+                        devices, current_bluetooth, message = self.window.scan_bluetooth_devices()
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "bluetooth_list",
+                            "devices": devices,
+                            "current_bluetooth": current_bluetooth,
+                            "message": message
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to scan Bluetooth from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "bluetooth_list",
+                            "message": f"Failed to scan Bluetooth: {exc}"
+                        }))
+                    continue
+
+                # Handle Bluetooth connect request
+                if message_type == "connect_bluetooth":
+                    mac = str(payload.get("mac", ""))
+                    name = str(payload.get("name", ""))
+                    try:
+                        success, message, current_bluetooth = self.window.connect_to_bluetooth(
+                            {"mac": mac, "name": name}
+                        )
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "bluetooth_connected",
+                            "success": success,
+                            "message": message,
+                            "current_bluetooth": current_bluetooth
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to connect Bluetooth from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "bluetooth_connected",
+                            "message": f"Failed to connect Bluetooth: {exc}"
+                        }))
+                    continue
+
+                # Handle Bluetooth remove request
+                if message_type == "remove_bluetooth":
+                    mac = str(payload.get("mac", ""))
+                    try:
+                        success, message = self.window.remove_bluetooth_device({"mac": mac})
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "bluetooth_removed",
+                            "success": success,
+                            "message": message
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to remove Bluetooth from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "bluetooth_removed",
+                            "message": f"Failed to remove Bluetooth: {exc}"
+                        }))
+                    continue
+
+                # Handle Sound settings request
+                if message_type == "get_sound":
+                    try:
+                        speakers = self.window.get_audio_sinks()
+                        default_sink = self.window.get_default_audio_sink()
+                        message = f"Found {len(speakers)} audio device(s)" if speakers else "No audio devices found"
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "sound_list",
+                            "speakers": speakers,
+                            "default_sink": default_sink,
+                            "message": message
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to get sound devices from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "sound_list",
+                            "message": f"Failed to get sound devices: {exc}"
+                        }))
+                    continue
+
+                # Handle Sound default set request
+                if message_type == "set_sound":
+                    sink_name = str(payload.get("sink", ""))
+                    try:
+                        success = self.window.set_default_audio_sink(sink_name)
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "sound_set",
+                            "success": success,
+                            "message": "Default audio device updated" if success else "Failed to set default audio device"
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to set sound device from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "sound_set",
+                            "message": f"Failed to set sound device: {exc}"
+                        }))
+                    continue
+
+                # Handle Add App request
+                if message_type == "add_app":
+                    app_id = str(payload.get("id", ""))
+                    app_name = str(payload.get("name", ""))
+                    app_kind = str(payload.get("kind", "native"))
+                    try:
+                        success, message = self.window.add_app_from_remote(app_id, app_name, app_kind)
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "app_added",
+                            "success": success,
+                            "message": message
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to add app from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "app_added",
+                            "message": f"Failed to add app: {exc}"
+                        }))
                     continue
 
                 action = action.upper()
@@ -3019,10 +3197,8 @@ class LauncherWindow(QMainWindow):
                 for line in result.stdout.splitlines():
                     if line.startswith("yes:"):
                         ssid = line.split(":", 1)[1]
-                        logging.info(f"WiFi SSID found: {ssid}")
                         return ssid
             
-            logging.info("No WiFi SSID found")
             return ""
         except Exception as e:
             logging.error(f"Error getting WiFi SSID: {e}")
@@ -3052,7 +3228,6 @@ class LauncherWindow(QMainWindow):
                         is_wifi = True
                         break
             
-            logging.info(f"is_wifi_connection result: {is_wifi}")
             return is_wifi
         except Exception as e:
             logging.error(f"Error checking WiFi connection: {e}")
@@ -3115,6 +3290,12 @@ class LauncherWindow(QMainWindow):
         ip_address = self.get_ip_address()
         wifi_ssid = self.get_wifi_ssid()
         is_wifi = self.is_wifi_connection()
+        
+        # Initialize cache for WiFi info
+        self._cached_ip_address = ip_address
+        self._cached_wifi_ssid = wifi_ssid
+        self._cached_is_wifi = is_wifi
+        self._last_wifi_check = time.time()
         
         import logging
         logging.info(f"IP: {ip_address}, WiFi SSID: '{wifi_ssid}', Is WiFi: {is_wifi}")
@@ -3752,6 +3933,7 @@ class LauncherWindow(QMainWindow):
 
     def get_installed_apps(self):
         """Get list of installed apps for remote control app listing"""
+        import base64
         apps_list = []
         categories = self.get_categorized_entries()
         
@@ -3761,16 +3943,43 @@ class LauncherWindow(QMainWindow):
                 app_id = item.get("id", item.get("name", "")).lower().replace(" ", "_")
                 app_name = item.get("name", "Unknown")
                 
-                # Determine icon based on app type
-                icon_name = "application"
-                if entry["kind"] == "web":
-                    icon_name = "globe"
+                # Resolve actual icon path
+                icon_path = ""
+                if entry["kind"] == "native":
+                    icon_path = resolve_native_icon(item)
+                else:
+                    icon_path = fetch_web_icon(item)
+                
+                # Convert icon to base64 data URI
+                icon_data = ""
+                if icon_path:
+                    try:
+                        icon_file = Path(icon_path)
+                        if icon_file.exists():
+                            with open(icon_file, "rb") as f:
+                                icon_bytes = f.read()
+                                icon_b64 = base64.b64encode(icon_bytes).decode('utf-8')
+                                # Determine MIME type from extension
+                                ext = icon_file.suffix.lower()
+                                mime_types = {
+                                    '.png': 'image/png',
+                                    '.jpg': 'image/jpeg',
+                                    '.jpeg': 'image/jpeg',
+                                    '.gif': 'image/gif',
+                                    '.svg': 'image/svg+xml',
+                                    '.ico': 'image/x-icon',
+                                    '.xpm': 'image/x-xpixmap',
+                                }
+                                mime_type = mime_types.get(ext, 'image/png')
+                                icon_data = f"data:{mime_type};base64,{icon_b64}"
+                    except Exception as e:
+                        logging.warning("Failed to encode icon for %s: %s", app_name, e)
                 
                 apps_list.append({
                     "id": app_id,
                     "name": app_name,
                     "kind": entry["kind"],
-                    "icon": icon_name,
+                    "icon": icon_data,  # Base64 data URI
                     "category": category_name
                 })
         
@@ -3806,8 +4015,8 @@ class LauncherWindow(QMainWindow):
                 self.config["native_apps"] = native_apps
                 save_config(self.config_path, self.config)
                 logging.info("Removed native app: %s", app_name)
-                # Refresh tiles immediately
-                self.populate_tiles()
+                # Refresh tiles immediately on main thread
+                QTimer.singleShot(0, self.populate_tiles)
                 return
         
         # Try to remove from web apps
@@ -3820,11 +4029,76 @@ class LauncherWindow(QMainWindow):
                 self.config["web_apps"] = web_apps
                 save_config(self.config_path, self.config)
                 logging.info("Removed web app: %s", app_name)
-                # Refresh tiles immediately
-                self.populate_tiles()
+                # Refresh tiles immediately on main thread
+                QTimer.singleShot(0, self.populate_tiles)
                 return
         
         logging.warning("App not found for removal: %s", app_id)
+
+    def add_app_from_remote(self, app_id: str, app_name: str, app_kind: str):
+        """Add an app to config from remote control request"""
+        try:
+            app_id_normalized = app_id.lower().replace(" ", "_")
+            
+            # Check if app already exists
+            categories = self.get_categorized_entries()
+            for category_name, entries in categories:
+                for entry in entries:
+                    item = entry["item"]
+                    item_id = item.get("id", item.get("name", "")).lower().replace(" ", "_")
+                    if item_id == app_id_normalized:
+                        return False, f"{app_name} is already in your launcher"
+            
+            # Find the app in desktop files for native apps
+            if app_kind == "native":
+                from pathlib import Path
+                desktop_dirs = desktop_file_locations()
+                app_entry = None
+                
+                for desktop_dir in desktop_dirs:
+                    if not desktop_dir.exists():
+                        continue
+                    for desktop_file in desktop_dir.glob("*.desktop"):
+                        try:
+                            parser = configparser.ConfigParser()
+                            parser.read(desktop_file)
+                            if parser.has_section("Desktop Entry"):
+                                name = parser.get("Desktop Entry", "Name", fallback="")
+                                if name.lower().replace(" ", "_") == app_id_normalized or \
+                                   desktop_file.stem.lower().replace(" ", "_") == app_id_normalized:
+                                    exec_cmd = parser.get("Desktop Entry", "Exec", fallback="")
+                                    icon = parser.get("Desktop Entry", "Icon", fallback="")
+                                    if exec_cmd:
+                                        app_entry = {
+                                            "id": app_id_normalized,
+                                            "name": app_name,
+                                            "cmd": exec_cmd.split()[0] if exec_cmd else "",
+                                            "icon": icon
+                                        }
+                                        break
+                        except Exception:
+                            continue
+                    if app_entry:
+                        break
+                
+                if app_entry:
+                    native_apps = self.config.get("native_apps", [])
+                    native_apps.append(app_entry)
+                    self.config["native_apps"] = native_apps
+                    save_config(self.config_path, self.config)
+                    logging.info("Added native app: %s", app_name)
+                    # Refresh tiles on main thread
+                    QTimer.singleShot(0, self.populate_tiles)
+                    return True, f"{app_name} added to launcher"
+                else:
+                    return False, f"Could not find {app_name} on your system"
+            
+            # For web apps, they should already be in config
+            return False, f"Web apps must be added through settings"
+            
+        except Exception as e:
+            logging.exception("Failed to add app")
+            return False, f"Error adding app: {str(e)}"
 
     def get_launchable_entries(self):
         entries = []
@@ -4746,6 +5020,111 @@ class LauncherWindow(QMainWindow):
             logging.exception("Failed to remove Bluetooth device")
             return False, f"Could not remove {mac}: {exc}"
 
+    def get_audio_sinks(self):
+        """Get list of available audio output devices"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return []
+        
+        sinks = []
+        try:
+            result = subprocess.run(
+                [pactl, "list", "short", "sinks"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.splitlines():
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        sink_name = parts[1]
+                        # Get friendly name
+                        friendly_name = self.get_sink_friendly_name(sink_name)
+                        sinks.append({
+                            "name": sink_name,
+                            "label": friendly_name
+                        })
+        except Exception as e:
+            logging.error(f"Error getting audio sinks: {e}")
+        
+        return sinks
+
+    def get_sink_friendly_name(self, sink_name):
+        """Extract a friendly name from sink name"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return sink_name
+        
+        try:
+            result = subprocess.run(
+                [pactl, "get-sink-info", sink_name],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Description:" in line:
+                        return line.split("Description:", 1)[1].strip()
+        except Exception:
+            pass
+        
+        # Fallback: extract from sink name
+        return sink_name.split(".")[-1] if "." in sink_name else sink_name
+
+    def get_default_audio_sink(self):
+        """Get the current default audio sink"""
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return ""
+        
+        try:
+            result = subprocess.run(
+                [pactl, "get-default-sink"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return ""
+
+    def set_default_audio_sink(self, sink_name):
+        """Set the default audio sink"""
+        if not sink_name:
+            return False
+        
+        pactl = shutil.which("pactl")
+        if not pactl:
+            return False
+        
+        try:
+            result = subprocess.run(
+                [pactl, "set-default-sink", sink_name],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                logging.info(f"Set default audio sink to: {sink_name}")
+                return True
+            else:
+                logging.error(f"Failed to set default sink: {result.stderr}")
+                return False
+        except Exception as e:
+            logging.error(f"Error setting default sink: {e}")
+            return False
+
     def update_from_github(self):
         git = shutil.which("git")
         if not git:
@@ -5598,12 +5977,25 @@ class LauncherWindow(QMainWindow):
         if not hasattr(self, 'ip_label'):
             return
         
-        ip_address = self.get_ip_address()
-        wifi_ssid = self.get_wifi_ssid()
-        is_wifi = self.is_wifi_connection()
-        
-        # Get current time
+        # Get current time (this updates every second)
         current_time = time.strftime("%H:%M:%S")
+        
+        # Check if we need to refresh WiFi info (only every 30 seconds)
+        current_timestamp = time.time()
+        if not hasattr(self, '_last_wifi_check'):
+            self._last_wifi_check = 0
+        
+        # Refresh WiFi info if more than 30 seconds have passed
+        if current_timestamp - self._last_wifi_check > 30:
+            self._cached_ip_address = self.get_ip_address()
+            self._cached_wifi_ssid = self.get_wifi_ssid()
+            self._cached_is_wifi = self.is_wifi_connection()
+            self._last_wifi_check = current_timestamp
+        
+        # Use cached values
+        ip_address = getattr(self, '_cached_ip_address', self.get_ip_address())
+        wifi_ssid = getattr(self, '_cached_wifi_ssid', '')
+        is_wifi = getattr(self, '_cached_is_wifi', False)
         
         if is_wifi:
             if wifi_ssid:

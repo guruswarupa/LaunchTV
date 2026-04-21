@@ -58,7 +58,6 @@ plymouth-themes
 # Media apps
 kodi
 vlc
-flatpak
 
 # Networking
 network-manager

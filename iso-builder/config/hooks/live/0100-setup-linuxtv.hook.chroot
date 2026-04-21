@@ -27,7 +27,7 @@ systemctl enable systemd-timesyncd 2>/dev/null || true
 
 VENV_DIR="/opt/linuxtv/.venv"
 
-apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev flatpak ca-certificates gnupg
+apt-get install -y wget libmpv-dev python3-yaml python3-websockets python3-evdev ca-certificates gnupg
 python3 -m venv --system-site-packages "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
 
@@ -40,8 +40,11 @@ if [ ! -f /usr/share/keyrings/brave-browser-archive-keyring.gpg ]; then
 fi
 apt-get install -y brave-browser
 
-flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install -y --system flathub com.stremio.Stremio
+# Install Stremio from custom repository
+wget -qO - https://debian.vejeta.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/stremio-debian.gpg
+echo "deb [signed-by=/usr/share/keyrings/stremio-debian.gpg] https://debian.vejeta.com trixie main non-free" > /etc/apt/sources.list.d/stremio.list
+apt-get update
+apt-get install -y stremio stremio-server
 
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$INSTALL_DIR"
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$VENV_DIR"
