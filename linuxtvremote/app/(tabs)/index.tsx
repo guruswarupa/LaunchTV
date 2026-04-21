@@ -192,6 +192,7 @@ export default function RemoteScreen() {
   const [kodiAuthPassword, setKodiAuthPassword] = useState('');
   const [kodiGroups, setKodiGroups] = useState<KodiChannelGroup[]>([]);
   const [kodiChannels, setKodiChannels] = useState<KodiChannel[]>([]);
+  const [kodiChannelThumbnails, setKodiChannelThumbnails] = useState<Record<number, string>>({});
   const [selectedKodiGroup, setSelectedKodiGroup] = useState<KodiChannelGroup | null>(null);
   const [isKodiLoading, setIsKodiLoading] = useState(false);
   const [kodiError, setKodiError] = useState<string | null>(null);
@@ -290,13 +291,22 @@ export default function RemoteScreen() {
       imagePath = imagePath.replace('image://', '');
     }
     
-    // Build URL with embedded credentials for React Native Image
+    // Build URL - try with credentials first
     const kodiUser = system?.kodiUsername?.trim() || '';
     const kodiPass = system?.kodiPassword || '';
     
     let baseUrl = `http://${host}:${kodiTargetPort}`;
+    
+    // For credentials, use base64 encoding to avoid issues with special characters
     if (kodiUser || kodiPass) {
-      baseUrl = `http://${encodeURIComponent(kodiUser)}:${encodeURIComponent(kodiPass)}@${host}:${kodiTargetPort}`;
+      // Use base64 encoding for Basic Auth to handle special characters properly
+      const credentials = `${kodiUser}:${kodiPass}`;
+      const base64Credentials = btoa(credentials);
+      // React Native Image doesn't support headers, so we must use URL-embedded credentials
+      // But we need to be careful with encoding - only encode for URL safety, not double-encode
+      const safeUser = encodeURIComponent(kodiUser);
+      const safePass = encodeURIComponent(kodiPass);
+      baseUrl = `http://${safeUser}:${safePass}@${host}:${kodiTargetPort}`;
     }
     
     return `${baseUrl}/image/${encodeURIComponent(imagePath)}`;
@@ -640,6 +650,17 @@ export default function RemoteScreen() {
     setAddAppsLoading(true);
     setAddAppsMessage(`Adding ${appName}...`);
     sendSettingsRequest('add_app', { id: appId, name: appName, kind });
+  };
+
+  const fetchKodiImage = (channelId: number, thumbnailPath: string) => {
+    // Remove image:// prefix if present
+    let imagePath = thumbnailPath;
+    if (imagePath.startsWith('image://')) {
+      imagePath = imagePath.replace('image://', '');
+    }
+    
+    // Request image through WebSocket (desktop will handle auth)
+    repositoryRef.current?.sendSettingsRequest('get_kodi_image', { path: imagePath });
   };
 
   const showCustomApp = () => {
@@ -1179,7 +1200,36 @@ export default function RemoteScreen() {
       setAddAppsMessage(repositoryState.addAppsMessage || '');
       setAddAppsLoading(false);
     }
-  }, [repositoryState.soundSpeakers, repositoryState.defaultSink, repositoryState.soundMessage, repositoryState.addAppsMessage]);
+    // Handle Kodi image response
+    if (repositoryState.kodiImage && repositoryState.kodiImagePath) {
+      // Find the channel ID that matches this path
+      const matchingChannel = kodiChannels.find(ch => {
+        let chPath = ch.thumbnail || '';
+        if (chPath.startsWith('image://')) {
+          chPath = chPath.replace('image://', '');
+        }
+        return chPath === repositoryState.kodiImagePath;
+      });
+      
+      if (matchingChannel) {
+        setKodiChannelThumbnails(prev => ({
+          ...prev,
+          [matchingChannel.channelid]: repositoryState.kodiImage!,
+        }));
+      }
+    }
+  }, [repositoryState.soundSpeakers, repositoryState.defaultSink, repositoryState.soundMessage, repositoryState.addAppsMessage, repositoryState.kodiImage, repositoryState.kodiImagePath, kodiChannels]);
+
+  // Fetch Kodi images when channels are loaded
+  useEffect(() => {
+    if (kodiChannels.length > 0) {
+      kodiChannels.forEach(channel => {
+        if (channel.thumbnail && !kodiChannelThumbnails[channel.channelid]) {
+          fetchKodiImage(channel.channelid, channel.thumbnail);
+        }
+      });
+    }
+  }, [kodiChannels]);
 
   // Update available apps when repository state changes
   useEffect(() => {
@@ -2137,19 +2187,19 @@ export default function RemoteScreen() {
                           onPress={() => playKodiChannel(channel.channelid, channel.label)}>
                           <View style={styles.channelIconContainer}>
                             {channel.thumbnail ? (
-                              <RNImage 
-                                source={{ 
-                                  uri: getKodiImageUrl(activeSystem, channel.thumbnail),
-                                }} 
-                                style={styles.channelThumbnailImage}
-                                resizeMode="cover"
-                                onError={(e) => {
-                                  console.log('Failed to load thumbnail:', channel.label);
-                                  const thumbUrl = channel.thumbnail ? getKodiImageUrl(activeSystem, channel.thumbnail) : 'no thumbnail';
-                                  console.log('URL:', thumbUrl);
-                                  console.log('Error:', e.nativeEvent.error);
-                                }}
-                              />
+                              <>
+                                {kodiChannelThumbnails[channel.channelid] ? (
+                                  <RNImage 
+                                    source={{ 
+                                      uri: kodiChannelThumbnails[channel.channelid],
+                                    }} 
+                                    style={styles.channelThumbnailImage}
+                                    resizeMode="cover"
+                                  />
+                                ) : (
+                                  <Ionicons name="image" size={32} color="#8b949e" />
+                                )}
+                              </>
                             ) : (
                               <Ionicons name="tv" size={32} color="#58a6ff" />
                             )}

@@ -38,6 +38,8 @@ export type RepositoryState = {
   defaultSink?: string;
   soundMessage?: string;
   addAppsMessage?: string;
+  kodiImage?: string;
+  kodiImagePath?: string;
 };
 
 export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click';
@@ -583,6 +585,8 @@ export class RealServerRepository implements RemoteRepository {
         default_sink?: string;
         success?: boolean;
         sink?: string;
+        image?: string;
+        path?: string;
       };
 
       // Handle auth challenge from server
@@ -757,6 +761,15 @@ export class RealServerRepository implements RemoteRepository {
         if (payload.type === 'app_removed') {
           this.emit({
             addAppsMessage: payload.message || '',
+          });
+          return;
+        }
+        
+        // Handle Kodi Image response
+        if (payload.type === 'kodi_image') {
+          this.emit({
+            kodiImage: payload.image || '',
+            kodiImagePath: payload.path || '',
           });
           return;
         }
