@@ -768,7 +768,39 @@ export default function RemoteScreen() {
       
       const data = await response.json();
       const channels = (data?.result?.channels || []) as KodiChannel[];
-      setKodiChannels(channels);
+      
+      // Process thumbnails to create proper URLs
+      const kodiHost = kodiSystem?.ipAddress || 'localhost';
+      const kodiPort = kodiSystem?.kodiPort?.trim() || DEFAULT_KODI_PORT;
+      const processedChannels = channels.map(channel => {
+        let thumbnailUrl = channel.thumbnail;
+        if (thumbnailUrl) {
+          console.log('Original thumbnail:', thumbnailUrl);
+          // Kodi returns paths like "image://path/to/thumb.jpg" or just paths
+          // We need to convert them to HTTP URLs
+          if (thumbnailUrl.startsWith('image://')) {
+            // Remove image:// prefix and URL encode the path
+            const imagePath = thumbnailUrl.replace('image://', '');
+            thumbnailUrl = `http://${kodiHost}:${kodiPort}/image/${encodeURIComponent(imagePath)}`;
+          } else if (thumbnailUrl && !thumbnailUrl.startsWith('http')) {
+            // If it's a path but not starting with http, make it a URL
+            thumbnailUrl = `http://${kodiHost}:${kodiPort}/image/${encodeURIComponent(thumbnailUrl)}`;
+          }
+          // Add auth headers to the URL if needed
+          const kodiUser = kodiSystem?.kodiUsername?.trim();
+          const kodiPass = kodiSystem?.kodiPassword;
+          if (kodiUser || kodiPass) {
+            const authString = `${kodiUser || ''}:${kodiPass || ''}`;
+            const encodedAuth = encodeBase64(authString);
+            // Insert credentials into URL
+            thumbnailUrl = thumbnailUrl.replace('http://', `http://${encodedAuth}@`);
+          }
+          console.log('Processed thumbnail URL:', thumbnailUrl);
+        }
+        return { ...channel, thumbnail: thumbnailUrl };
+      });
+      
+      setKodiChannels(processedChannels);
       
       if (channels.length === 0) {
         setKodiError(
@@ -2116,6 +2148,10 @@ export default function RemoteScreen() {
                                 source={{ uri: channel.thumbnail }} 
                                 style={styles.channelThumbnailImage}
                                 resizeMode="cover"
+                                onError={(e) => {
+                                  console.log('Failed to load thumbnail:', channel.thumbnail);
+                                  console.log('Error:', e.nativeEvent.error);
+                                }}
                               />
                             ) : (
                               <Ionicons name="tv" size={32} color="#58a6ff" />
