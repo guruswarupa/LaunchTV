@@ -493,6 +493,34 @@ def normalized_icon_path(source_path: str, cache_key: str, size: int = 96):
     return str(target_path)
 
 
+def create_white_icon(icon_path: str, size: int = 96):
+    """Create a white version of an icon by painting it with white color"""
+    if not icon_path:
+        return QIcon()
+    
+    icon_source = Path(icon_path).expanduser()
+    if not icon_source.exists():
+        return QIcon()
+    
+    pixmap = QPixmap(str(icon_source))
+    if pixmap.isNull():
+        return QIcon()
+    
+    # Create a new pixmap with the same size
+    white_pixmap = QPixmap(pixmap.size())
+    white_pixmap.fill(Qt.transparent)
+    
+    # Paint the original pixmap in white
+    painter = QPainter(white_pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode_Source)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(white_pixmap.rect(), Qt.white)
+    painter.end()
+    
+    return QIcon(white_pixmap)
+
+
 @lru_cache(maxsize=256)
 def resolve_icon_name(icon_name: str):
     if not icon_name:
@@ -561,15 +589,23 @@ def desktop_entry_for_command(command_text: str):
 
 
 def resolve_native_icon(app):
+    app_name = app.get("name", "")
+    
+    # Try to find icon by matching app name to filename
+    if app_name:
+        icon_name = app_name.lower().replace(" ", "") + ".png"
+        icon_path = resource_path("icons/" + icon_name)
+        if icon_path.exists():
+            return normalized_icon_path(str(icon_path), f"native-name:{icon_name}")
+    
+    # Try configured icon as fallback
     configured_icon = app.get("icon", "")
     if configured_icon:
         path = resource_path(configured_icon)
         if path.exists():
             return normalized_icon_path(str(path), f"native-config:{configured_icon}")
-        resolved = resolve_icon_name(configured_icon)
-        if resolved:
-            return normalized_icon_path(resolved, f"native-theme:{configured_icon}")
-
+    
+    # Try desktop entry
     entry = desktop_entry_for_command(app.get("cmd", ""))
     if entry:
         resolved = resolve_icon_name(entry.get("Icon", ""))
@@ -579,39 +615,27 @@ def resolve_native_icon(app):
 
 
 def fetch_web_icon(app):
+    app_name = app.get("name", "")
+    
+    # Try to find icon by matching app name to filename
+    if app_name:
+        icon_name = app_name.lower().replace(" ", "").replace("+", "plus") + ".png"
+        icon_path = resource_path("icons/" + icon_name)
+        if icon_path.exists():
+            return normalized_icon_path(str(icon_path), f"web-name:{icon_name}")
+    
+    # Try configured icon as fallback
     configured_icon = app.get("icon", "")
     if configured_icon:
         path = resource_path(configured_icon)
         if path.exists():
             return normalized_icon_path(str(path), f"web-config:{configured_icon}")
-        resolved = resolve_icon_name(configured_icon)
-        if resolved:
-            return normalized_icon_path(resolved, f"web-theme:{configured_icon}")
-
-    url = app.get("url", "")
-    if not url:
-        return ""
-
-    parsed = urlparse(url if "://" in url else f"https://{url}")
-    if not parsed.netloc:
-        return ""
-
-    icon_dir = cache_dir() / "web"
-    icon_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = icon_dir / f"{hashlib.sha1(parsed.netloc.encode('utf-8')).hexdigest()}.ico"
-    if cache_file.exists():
-        return normalized_icon_path(str(cache_file), f"web-cache:{parsed.netloc}")
-
-    favicon_url = f"{parsed.scheme or 'https'}://{parsed.netloc}/favicon.ico"
-    try:
-        request = Request(favicon_url, headers={"User-Agent": "LinuxTV/1.0"})
-        with urlopen(request, timeout=3) as response:
-            data = response.read()
-        if data:
-            cache_file.write_bytes(data)
-            return normalized_icon_path(str(cache_file), f"web-cache:{parsed.netloc}")
-    except Exception as exc:
-        logging.info("Could not fetch favicon for %s: %s", parsed.netloc, exc)
+    
+    # Fallback to network icon
+    network_icon = resource_path("icons/network.png")
+    if network_icon.exists():
+        return normalized_icon_path(str(network_icon), "web-fallback:network")
+    
     return ""
 
 
@@ -1804,9 +1828,9 @@ class TileButton(QPushButton):
             self.setIcon(QIcon())
             return
 
-        path = resource_path(icon_path)
-        if not path.exists():
-            path = Path(icon_path).expanduser()
+        path = Path(icon_path).expanduser()
+        if not path.is_absolute():
+            path = resource_path(icon_path)
         if path.exists():
             self.setIcon(QIcon(str(path)))
 
@@ -3378,65 +3402,83 @@ class LauncherWindow(QMainWindow):
         # Network button
         network_button = QToolButton()
         network_button.setObjectName("networkButton")
-        network_button.setText("🌐")
+        network_icon_path = resource_path("icons/wifi.png")
+        if network_icon_path.exists():
+            white_icon = create_white_icon(str(network_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            network_button.setIcon(white_icon)
+            network_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         network_button.setToolTip("Network Settings")
         network_button.setCursor(Qt.PointingHandCursor)
         network_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        network_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         network_button.clicked.connect(self.open_network_settings)
         hero_top_row.addWidget(network_button)
 
         # Bluetooth button
         bluetooth_button = QToolButton()
         bluetooth_button.setObjectName("bluetoothButton")
-        bluetooth_button.setText("ᛒ")
+        bluetooth_icon_path = resource_path("icons/bluetooth.png")
+        if bluetooth_icon_path.exists():
+            white_icon = create_white_icon(str(bluetooth_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            bluetooth_button.setIcon(white_icon)
+            bluetooth_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         bluetooth_button.setToolTip("Bluetooth Settings")
         bluetooth_button.setCursor(Qt.PointingHandCursor)
         bluetooth_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        bluetooth_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         bluetooth_button.clicked.connect(self.open_bluetooth_settings)
         hero_top_row.addWidget(bluetooth_button)
 
         # Sound button
         sound_button = QToolButton()
         sound_button.setObjectName("soundButton")
-        sound_button.setText("🔊")
+        sound_icon_path = resource_path("icons/sound.png")
+        if sound_icon_path.exists():
+            white_icon = create_white_icon(str(sound_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            sound_button.setIcon(white_icon)
+            sound_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         sound_button.setToolTip("Sound Settings")
         sound_button.setCursor(Qt.PointingHandCursor)
         sound_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        sound_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         sound_button.clicked.connect(self.open_sound_settings)
         hero_top_row.addWidget(sound_button)
 
         # Shutdown button
         shutdown_button = QToolButton()
         shutdown_button.setObjectName("shutdownButton")
-        shutdown_button.setText("⏻")
+        power_icon_path = resource_path("icons/power.png")
+        if power_icon_path.exists():
+            white_icon = create_white_icon(str(power_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            shutdown_button.setIcon(white_icon)
+            shutdown_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         shutdown_button.setToolTip("Shutdown")
         shutdown_button.setCursor(Qt.PointingHandCursor)
         shutdown_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        shutdown_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"] - 6))
         shutdown_button.clicked.connect(self.shutdown_system)
         hero_top_row.addWidget(shutdown_button)
 
         # Restart button
         restart_button = QToolButton()
         restart_button.setObjectName("restartButton")
-        restart_button.setText("⟳")
+        reboot_icon_path = resource_path("icons/reboot.png")
+        if reboot_icon_path.exists():
+            white_icon = create_white_icon(str(reboot_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            restart_button.setIcon(white_icon)
+            restart_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         restart_button.setToolTip("Restart")
         restart_button.setCursor(Qt.PointingHandCursor)
         restart_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        restart_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         restart_button.clicked.connect(self.restart_system)
         hero_top_row.addWidget(restart_button)
 
         settings_button = QToolButton()
         settings_button.setObjectName("settingsButton")
-        settings_button.setText("⚙")
+        settings_icon_path = resource_path("icons/settings.png")
+        if settings_icon_path.exists():
+            white_icon = create_white_icon(str(settings_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            settings_button.setIcon(white_icon)
+            settings_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
         settings_button.setToolTip("Open LinuxTV settings")
         settings_button.setCursor(Qt.PointingHandCursor)
         settings_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        settings_button.setFont(QFont("Sans Serif", self.ui_metrics["settings_button_font"]))
         settings_button.clicked.connect(self.open_remote_settings)
         hero_top_row.addWidget(settings_button)
         hero_layout.addLayout(hero_top_row)
@@ -3840,10 +3882,70 @@ class LauncherWindow(QMainWindow):
             section_layout.setSpacing(12)
 
             # Add icon based on category type
-            icon = "🎬" if "Native" in category_name else "🌐"
-            label = QLabel(f"{icon}  {category_name}")
-            label.setProperty("rowHeading", "true")
-            section_layout.addWidget(label)
+            if "Native" in category_name:
+                # Native Apps - use clapperboard icon as fallback
+                clapperboard_icon_path = resource_path("icons/clapperboard.png")
+                if clapperboard_icon_path.exists():
+                    white_icon = create_white_icon(str(clapperboard_icon_path), 32)
+                    icon_label = QLabel()
+                    icon_pixmap = white_icon.pixmap(32, 32)
+                    if not icon_pixmap.isNull():
+                        icon_label.setPixmap(icon_pixmap)
+                        icon_label.setFixedSize(32, 32)
+                    
+                    text_label = QLabel(category_name)
+                    text_label.setStyleSheet("color: white;")
+                    text_label.setFont(QFont("Sans Serif", 20, QFont.Bold))
+                    
+                    header_layout = QHBoxLayout()
+                    header_layout.setContentsMargins(0, 0, 0, 0)
+                    header_layout.setSpacing(10)
+                    header_layout.addWidget(icon_label)
+                    header_layout.addWidget(text_label)
+                    header_layout.addStretch()
+                    
+                    label = QWidget()
+                    label.setLayout(header_layout)
+                    label.setProperty("rowHeading", "true")
+                    section_layout.addWidget(label)
+                    label = None
+                else:
+                    icon = "🎬"
+                    label = QLabel(f"{icon}  {category_name}")
+            else:
+                # Web Apps - use network icon
+                network_icon_path = resource_path("icons/network.png")
+                if network_icon_path.exists():
+                    white_icon = create_white_icon(str(network_icon_path), 32)
+                    icon_label = QLabel()
+                    icon_pixmap = white_icon.pixmap(32, 32)
+                    if not icon_pixmap.isNull():
+                        icon_label.setPixmap(icon_pixmap)
+                        icon_label.setFixedSize(32, 32)
+                    
+                    text_label = QLabel(category_name)
+                    text_label.setStyleSheet("color: white;")
+                    text_label.setFont(QFont("Sans Serif", 20, QFont.Bold))
+                    
+                    header_layout = QHBoxLayout()
+                    header_layout.setContentsMargins(0, 0, 0, 0)
+                    header_layout.setSpacing(10)
+                    header_layout.addWidget(icon_label)
+                    header_layout.addWidget(text_label)
+                    header_layout.addStretch()
+                    
+                    label = QWidget()
+                    label.setLayout(header_layout)
+                    label.setProperty("rowHeading", "true")
+                    section_layout.addWidget(label)
+                    label = None
+                else:
+                    icon = "🌐"
+                    label = QLabel(f"{icon}  {category_name}")
+
+            if label is not None:
+                label.setProperty("rowHeading", "true")
+                section_layout.addWidget(label)
 
             row_scroll = QScrollArea()
             row_scroll.setProperty("rowScroll", "true")
@@ -6210,6 +6312,11 @@ def main():
     logging.info("Starting %s with Qt binding %s", APP_NAME, QT_BINDING)
 
     config_path = resolve_config_path()
+    logging.info("Using config from: %s", config_path)
+    
+    # Log the actual file location of launcher.py for debugging
+    logging.info("Launcher.py location: %s", Path(__file__).resolve())
+    logging.info("Icon directory: %s", Path(__file__).parent / "icons")
 
     app = QApplication(sys.argv)
 

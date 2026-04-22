@@ -22,13 +22,13 @@ The ISO will be created in the `iso-builder/` directory as a `.iso` file.
 Flash it to a USB drive with:
 
 ```bash
-sudo dd if=live-image-amd64.hybrid.iso of=/dev/sdX bs=4M status=progress
+sudo dd if=LinuxTV.iso of=/dev/sdX bs=4M status=progress
 ```
 
 Test it in QEMU before flashing to hardware:
 
 ```bash
-qemu-system-x86_64 -m 2048 -cdrom live-image-amd64.hybrid.iso -boot d
+qemu-system-x86_64 -m 2048 -cdrom LinuxTV.iso -boot d
 ```
 
 On boot, the menu should now show these visible top-level options:

@@ -15,7 +15,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-ISO_FILE="live-image-amd64.hybrid.iso"
+ISO_FILE="LinuxTV.iso"
 
 if [ ! -f "$ISO_FILE" ]; then
     echo "Error: ISO file $ISO_FILE not found in current directory."

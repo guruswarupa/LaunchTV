@@ -17,7 +17,7 @@
 
 3. **Write the ISO:**
    ```bash
-   sudo dd if=live-image-amd64.hybrid.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   sudo dd if=LinuxTV.iso of=/dev/sdX bs=4M status=progress oflag=sync
    ```
    Replace `/dev/sdX` with your actual USB device (e.g., `/dev/sdb`)
 
@@ -102,10 +102,10 @@ This will:
    Sometimes the write process fails:
    ```bash
    # First, verify the ISO
-   sha256sum live-image-amd64.hybrid.iso
+   sha256sum LinuxTV.iso
    
    # Re-write with verification
-   sudo dd if=live-image-amd64.hybrid.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   sudo dd if=LinuxTV.iso of=/dev/sdX bs=4M status=progress oflag=sync
    sudo sync
    ```
 

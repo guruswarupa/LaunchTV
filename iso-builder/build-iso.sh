@@ -73,9 +73,10 @@ lb config \
 
 lb build 2>&1 | tee "$OUTPUT_LOG"
 
-find "$BUILD_DIR" -maxdepth 1 -type f -name '*.iso' -exec cp -f {} "$SCRIPT_DIR/" \;
+# Copy and rename ISO to LinuxTV.iso
+find "$BUILD_DIR" -maxdepth 1 -type f -name '*.iso' -exec cp -f {} "$SCRIPT_DIR/LinuxTV.iso" \;
 find "$BUILD_DIR" -maxdepth 1 -type f -name '*.packages' -exec cp -f {} "$SCRIPT_DIR/" \; 2>/dev/null || true
 
 echo
 echo "ISO built successfully!"
-ls -lh "$SCRIPT_DIR"/*.iso
+ls -lh "$SCRIPT_DIR/LinuxTV.iso"
