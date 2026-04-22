@@ -80,6 +80,10 @@ echo "[3/8] Setting up LinuxTV directory for $RUNTIME_USER..."
 sudo mkdir -p "$INSTALL_DIR"
 sudo cp -r "$SCRIPT_DIR"/../* "$INSTALL_DIR"/ 2>/dev/null || true
 sudo chown -R "$RUNTIME_USER:$RUNTIME_USER" "$INSTALL_DIR"
+
+# Ensure icons are readable by all users
+sudo chmod -R o+r "$INSTALL_DIR/linuxtvdesktop/icons/" 2>/dev/null || true
+
 echo "✓ LinuxTV directory owned by $RUNTIME_USER"
 
 # Step 4: Create Python virtual environment and install packages

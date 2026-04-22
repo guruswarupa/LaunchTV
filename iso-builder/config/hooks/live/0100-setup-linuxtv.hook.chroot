@@ -48,6 +48,10 @@ apt-get install -y stremio stremio-server
 
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$INSTALL_DIR"
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$VENV_DIR"
+
+# Ensure icons are readable by all users
+chmod -R o+r "$INSTALL_DIR/linuxtvdesktop/icons/"
+
 ln -sfn "$VENV_DIR" "/home/${LINUXTV_USER}/.linuxtv_venv"
 chown -h "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.linuxtv_venv"
 
