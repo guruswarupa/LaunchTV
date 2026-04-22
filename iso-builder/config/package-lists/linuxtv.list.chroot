@@ -31,10 +31,9 @@ python3-websockets
 python3-evdev
 
 # Audio
+pulseaudio
 pulseaudio-utils
-pipewire
-pipewire-pulse
-wireplumber
+pulseaudio-module-bluetooth
 
 # Window management tools
 wmctrl

@@ -66,7 +66,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user import-environment DISPLAY XAUTHORITY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS 2>/dev/null || true
-  systemctl --user start pipewire.service pipewire-pulse.service wireplumber.service 2>/dev/null || true
+  systemctl --user start pulseaudio.service 2>/dev/null || true
 fi
 
 if command -v xrandr >/dev/null 2>&1; then
