@@ -155,3 +155,9 @@ chown "${LINUXTV_USER}:${LINUXTV_USER}" "/home/${LINUXTV_USER}/.profile"
 for dm in gdm3 lightdm sddm; do
   systemctl disable "$dm" 2>/dev/null || true
 done
+
+# Make persistence setup script executable
+chmod +x /usr/local/bin/setup-persistence.sh
+
+# Enable persistence setup service
+systemctl enable setup-persistence.service 2>/dev/null || true

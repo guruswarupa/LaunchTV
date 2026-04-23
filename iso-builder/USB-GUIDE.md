@@ -2,66 +2,55 @@
 
 ## Writing the ISO to USB
 
-### Method 1: Using `dd` (Linux/Mac)
+### Using the LinuxTV Flash Tool
 
-**⚠️ WARNING: This will erase everything on the USB drive!**
+**This is the official flashing tool - works on Windows, macOS, and Linux!**
 
-1. **Insert your USB drive** (minimum 8GB recommended)
+1. **Navigate to the iso-builder folder**
 
-2. **Find your USB device name:**
-   ```bash
-   lsblk
+2. **Run the flash tool:**
+   
+   **Windows:**
    ```
-   Look for your USB drive by size. It will be something like `/dev/sdb` or `/dev/sdc`.
-   **DO NOT use a partition number like `/dev/sdb1` - use the whole device `/dev/sdb`**
-
-3. **Write the ISO:**
-   ```bash
-   sudo dd if=LinuxTV.iso of=/dev/sdX bs=4M status=progress oflag=sync
+   double-click flash-tool-windows.bat
    ```
-   Replace `/dev/sdX` with your actual USB device (e.g., `/dev/sdb`)
-
-4. **Wait for completion** - This may take 5-15 minutes depending on USB speed
-
-5. **Safely remove:**
+   
+   **macOS:**
    ```bash
-   sudo sync
+   ./flash-tool-macos.sh
+   ```
+   
+   **Linux:**
+   ```bash
+   ./flash-tool-linux.sh
    ```
 
-### Method 2: Using Etcher (Recommended for beginners)
+3. **Use the GUI:**
+   * Click "Browse..." and select the LinuxTV ISO file
+   * Select your USB drive from the dropdown
+   * Check "Enable persistence" if you want to save files and settings
+   * Click "Flash LinuxTV to USB"
+   * Wait for the process to complete (5-15 minutes)
 
-1. Download [Balena Etcher](https://www.balena.io/etcher/)
-2. Open Etcher
-3. Select the LinuxTV ISO file
-4. Select your USB drive
-5. Click "Flash!"
+4. **Done!** The tool will:
+   * Write the ISO to your USB drive
+   * Create a persistence partition (if enabled)
+   * The persistence partition will be automatically formatted as ext4 on first boot
 
-### Method 3: Using Ventoy (Multiple ISOs on one USB)
+**Requirements:**
+* Python 3 installed (download from https://www.python.org/downloads/)
+* On Linux: `sudo apt install python3 python3-tk`
 
-1. Download [Ventoy](https://www.ventoy.net/)
-2. Install Ventoy to your USB drive
-3. Copy the LinuxTV ISO file to the USB drive
-4. Boot and select LinuxTV from Ventoy menu
+## Setting Up Persistence
 
-## Setting Up Persistence (Optional)
+**Persistence is automatically set up when you use the LinuxTV Flash Tool!**
 
-After writing the ISO, you can set up persistence to save your changes:
+The flash tool creates a persistence partition on your USB drive. On first boot, LinuxTV will automatically:
+* Format the partition as ext4
+* Create the persistence.conf file
+* Enable persistence for saving your files and settings
 
-```bash
-sudo ./create-persistence.sh
-```
-
-**⚠️ IMPORTANT:**
-- The script will create a **NEW partition** in the free space after the ISO
-- It will **NOT** overwrite the bootable ISO partition
-- After running the script, **unplug and re-plug** the USB drive
-- The script is safe and preserves the bootable ISO
-
-This will:
-- Analyze the USB drive layout
-- Create a new partition in the unused space
-- Format it as ext4 with label "persistence"
-- Enable persistence so your files and settings are saved
+No manual setup required!
 
 ## Troubleshooting: USB Not Showing in BIOS/UEFI
 
@@ -121,23 +110,22 @@ This will:
      - "External Device Boot" - Enable it
    - Save and exit
 
-## Boot Options Explained
+## Boot Behavior
 
-When you boot from the USB, you'll see:
+LinuxTV is configured to boot automatically with persistence enabled. The boot menu is hidden for a faster, more seamless experience.
 
-1. **Boot LinuxTV Live (with Persistence)** - DEFAULT
-   - Saves all your changes, files, and settings
-   - Use this for regular usage
+**Default behavior:**
+* The USB boots directly into LinuxTV Live with persistence
+* No menu is shown, it starts in 0 seconds
+* The persistence partition is automatically formatted on first boot (if not already ext4)
+* Your files and settings are saved across reboots
 
-2. **Boot LinuxTV Live (No Persistence)**
-   - Fresh session every time
-   - Nothing is saved
-   - Good for testing or troubleshooting
+**To access boot options:**
+If you need to boot without persistence or use fail-safe mode, press `Esc` or `Shift` during boot to show the GRUB menu. You will see:
 
-3. **Boot LinuxTV Live (fail-safe)**
-   - Disables advanced features
-   - Use if normal boot fails
-   - Good for older hardware
+* **Boot LinuxTV Live** - Default option with persistence enabled
+* **Boot LinuxTV Live (No Persistence)** - Fresh session, nothing saved
+* **Advanced Options > Boot LinuxTV Live (fail-safe)** - For troubleshooting older hardware
 
 ## Default Login Credentials
 
@@ -149,8 +137,18 @@ When you boot from the USB, you'll see:
 Once LinuxTV boots:
 1. The system will auto-login
 2. Connect to WiFi using the network manager
-3. Start using Kodi, VLC, or browse with Brave
-4. Your changes will be saved (if using persistence)
+3. Set up remote control credentials:
+   * Open the LinuxTV settings
+   * Navigate to Remote Control section
+   * Set your username and password for remote access
+   * Note the IP address shown on screen
+4. Install the LinuxTV Remote app:
+   * Open Google Play Store on your Android phone
+   * Search for "LinuxTV Remote"
+   * Install the app
+   * Open the app and enter the IP address and credentials you set up
+5. Start using Kodi, VLC, or browse with Brave
+6. Your changes will be saved across reboots (persistence is enabled by default)
 
 ## Need Help?
 

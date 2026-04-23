@@ -1,0 +1,15 @@
+[Unit]
+Description=Setup Persistence Partition
+DefaultDependencies=no
+After=live-root.service local-fs.target
+Before=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/setup-persistence.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
