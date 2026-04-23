@@ -3501,7 +3501,7 @@ class LauncherWindow(QMainWindow):
         self.process_monitor.timeout.connect(self.check_active_process)
 
         self.remote_action_timer = QTimer(self)
-        self.remote_action_timer.setInterval(16)
+        self.remote_action_timer.setInterval(8)
         self.remote_action_timer.timeout.connect(self.drain_remote_actions)
         self.remote_action_timer.start()
 
@@ -6366,17 +6366,20 @@ class LauncherWindow(QMainWindow):
             if event_type == "scroll":
                 dx = int(round(float(event.get("dx", 0))))
                 dy = int(round(float(event.get("dy", 0))))
-                # Use xdotool to simulate mouse wheel
+                # Use xdotool to simulate mouse wheel with reduced overhead
                 # Negative dy = scroll up (button 4), Positive dy = scroll down (button 5)
-                # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
+                commands = []
                 if dy < 0:
-                    subprocess.run([xdotool, "click", "4"], check=False)
+                    commands.extend([xdotool, "click", "4"])
                 elif dy > 0:
-                    subprocess.run([xdotool, "click", "5"], check=False)
+                    commands.extend([xdotool, "click", "5"])
                 if dx > 0:
-                    subprocess.run([xdotool, "click", "6"], check=False)
+                    commands.extend([xdotool, "click", "6"])
                 elif dx < 0:
-                    subprocess.run([xdotool, "click", "7"], check=False)
+                    commands.extend([xdotool, "click", "7"])
+                
+                if commands:
+                    subprocess.run(commands, check=False)
                 return
         
         # If an app is running, use the existing logic
@@ -6412,17 +6415,20 @@ class LauncherWindow(QMainWindow):
             dy = int(round(float(event.get("dy", 0))))
             # Focus the target window first
             self.focus_remote_target_window(xdotool, target_window)
-            # Use xdotool to simulate mouse wheel
+            # Use xdotool to simulate mouse wheel with reduced overhead
             # Negative dy = scroll up (button 4), Positive dy = scroll down (button 5)
-            # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
+            commands = []
             if dy < 0:
-                subprocess.run([xdotool, "click", "4"], check=False)
+                commands.extend([xdotool, "click", "4"])
             elif dy > 0:
-                subprocess.run([xdotool, "click", "5"], check=False)
+                commands.extend([xdotool, "click", "5"])
             if dx > 0:
-                subprocess.run([xdotool, "click", "6"], check=False)
+                commands.extend([xdotool, "click", "6"])
             elif dx < 0:
-                subprocess.run([xdotool, "click", "7"], check=False)
+                commands.extend([xdotool, "click", "7"])
+            
+            if commands:
+                subprocess.run(commands, check=False)
             return
 
     def close_active_app(self):

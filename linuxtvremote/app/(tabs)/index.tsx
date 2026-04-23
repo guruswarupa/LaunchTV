@@ -2457,8 +2457,8 @@ export default function RemoteScreen() {
                           const now = Date.now();
                           const timeSinceLastScroll = now - scrollGestureRef.current.lastScrollTime;
                           
-                          // Throttle scroll events to max 10 per second
-                          if (timeSinceLastScroll < 100) {
+                          // Throttle scroll events to max 20 per second (50ms interval)
+                          if (timeSinceLastScroll < 50) {
                             return;
                           }
                           
