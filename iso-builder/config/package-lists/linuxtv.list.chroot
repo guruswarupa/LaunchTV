@@ -39,6 +39,9 @@ pulseaudio-module-bluetooth
 wmctrl
 xdotool
 
+# Brightness control
+brightnessctl
+
 # Browser install helper
 curl
 ca-certificates

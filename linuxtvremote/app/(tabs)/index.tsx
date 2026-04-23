@@ -177,6 +177,7 @@ export default function RemoteScreen() {
   const [keyboardDraft, setKeyboardDraft] = useState('');
   const [volumeLevel, setVolumeLevel] = useState(50);
   const [isMuted, setIsMuted] = useState(false);
+  const [brightnessLevel, setBrightnessLevel] = useState(70);
   const [serverApps, setServerApps] = useState<
     { id: string; name: string; icon?: string; kind?: string; category?: string }[]
   >([]);
@@ -998,6 +999,24 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
+  const adjustBrightness = (direction: 'up' | 'down') => {
+    if (direction === 'up') {
+      setBrightnessLevel(prev => Math.min(prev + 5, 100));
+      sendAction('BRIGHTNESS_UP');
+    } else {
+      setBrightnessLevel(prev => Math.max(prev - 5, 0));
+      sendAction('BRIGHTNESS_DOWN');
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const setBrightness = (level: number) => {
+    setBrightnessLevel(level);
+    // Send WebSocket message to set brightness
+    sendSettingsRequest('set_brightness', { brightness: level });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
   const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT' | 'SLEEP') => {
     setIsMenuVisible(false);
     const actionLabel = action === 'SHUTDOWN' ? 'Shutdown' : action === 'REBOOT' ? 'Reboot' : 'Sleep';
@@ -1711,6 +1730,50 @@ export default function RemoteScreen() {
                       />
                       <Text style={styles.muteButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
                     </Pressable>
+                  </View>
+
+                  {/* Brightness Controls */}
+                  <View style={styles.brightnessContainer}>
+                    <View style={styles.brightnessSliderRow}>
+                      <Ionicons name="sunny-outline" size={24} color="#8b949e" />
+                      <View style={styles.sliderContainer}>
+                        <View style={styles.sliderTrack}>
+                          <View style={[styles.sliderFill, { width: `${brightnessLevel}%` }]} />
+                        </View>
+                        <View style={styles.sliderButtons}>
+                          <Pressable
+                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                            onPress={() => adjustBrightness('down')}>
+                            <Ionicons name="remove" size={24} color="#f0f6fc" />
+                          </Pressable>
+                          <Pressable
+                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
+                            onPress={() => adjustBrightness('up')}>
+                            <Ionicons name="add" size={24} color="#f0f6fc" />
+                          </Pressable>
+                        </View>
+                      </View>
+                      <Ionicons name="sunny" size={24} color="#8b949e" />
+                    </View>
+                    <View style={styles.brightnessPresetsRow}>
+                      {[25, 50, 75, 100].map((level) => (
+                        <Pressable
+                          key={level}
+                          style={({ pressed }) => [
+                            styles.brightnessPresetButton,
+                            brightnessLevel === level && styles.brightnessPresetButtonActive,
+                            pressed && styles.pressed
+                          ]}
+                          onPress={() => setBrightness(level)}>
+                          <Text style={[
+                            styles.brightnessPresetText,
+                            brightnessLevel === level && styles.brightnessPresetTextActive
+                          ]}>
+                            {level}%
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
                   </View>
                 </View>
               </ScrollView>
@@ -3624,6 +3687,41 @@ const styles = StyleSheet.create({
   muteButtonText: {
     color: '#ffffff',
     fontSize: 15,
+    fontWeight: '700',
+  },
+  brightnessContainer: {
+    gap: 12,
+  },
+  brightnessSliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brightnessPresetsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  brightnessPresetButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brightnessPresetButtonActive: {
+    backgroundColor: '#d29922',
+    borderColor: '#d29922',
+  },
+  brightnessPresetText: {
+    color: '#8b949e',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  brightnessPresetTextActive: {
+    color: '#ffffff',
     fontWeight: '700',
   },
   playButtonSmall: {

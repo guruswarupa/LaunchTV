@@ -9,6 +9,10 @@ if ! id -u "$LINUXTV_USER" >/dev/null 2>&1; then
   echo "${LINUXTV_USER}:linuxtv" | chpasswd
 fi
 
+# Add user to backlight group for brightness control (if group exists)
+groupadd -f backlight 2>/dev/null || true
+usermod -aG backlight "$LINUXTV_USER" 2>/dev/null || true
+
 install -d -m 0755 /etc/polkit-1/rules.d
 cat > /etc/polkit-1/rules.d/49-linuxtv-networkmanager.rules <<'EOF'
 polkit.addRule(function(action, subject) {
@@ -23,6 +27,14 @@ polkit.addRule(function(action, subject) {
 });
 EOF
 chmod 0644 /etc/polkit-1/rules.d/49-linuxtv-networkmanager.rules
+
+# Create udev rule for brightness control access
+install -d -m 0755 /etc/udev/rules.d
+cat > /etc/udev/rules.d/81-linuxtv-backlight.rules <<'EOF'
+ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod 666 /sys/class/backlight/%k/brightness"
+ACTION=="add", SUBSYSTEM=="leds", RUN+="/bin/chmod 666 /sys/class/leds/%k/brightness"
+EOF
+chmod 0644 /etc/udev/rules.d/81-linuxtv-backlight.rules
 systemctl enable systemd-timesyncd 2>/dev/null || true
 
 VENV_DIR="/opt/linuxtv/.venv"

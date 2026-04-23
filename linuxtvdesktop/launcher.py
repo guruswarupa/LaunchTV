@@ -96,6 +96,7 @@ def _load_qt_binding():
                 qt_widgets.QPushButton,
                 qt_widgets.QSizePolicy,
                 qt_widgets.QScrollArea,
+                qt_widgets.QSlider,
                 qt_widgets.QToolButton,
                 qt_widgets.QVBoxLayout,
                 qt_widgets.QWidget,
@@ -139,6 +140,7 @@ def _load_qt_binding():
     QPushButton,
     QSizePolicy,
     QScrollArea,
+    QSlider,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -910,6 +912,123 @@ def control_system_volume(action: str):
     return False
 
 
+def control_system_brightness(action: str, level: int = None):
+    """Control screen brightness. action can be 'BRIGHTNESS_UP', 'BRIGHTNESS_DOWN', or 'SET_BRIGHTNESS'"""
+    action = action.upper().strip()
+    
+    # Try brightnessctl first (modern systems)
+    brightnessctl = shutil.which("brightnessctl")
+    if brightnessctl:
+        try:
+            if action == "BRIGHTNESS_UP":
+                result = subprocess.run(
+                    [brightnessctl, "set", "+5%"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    return True
+            elif action == "BRIGHTNESS_DOWN":
+                result = subprocess.run(
+                    [brightnessctl, "set", "5%-"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    return True
+            elif action == "SET_BRIGHTNESS" and level is not None:
+                level = max(0, min(100, level))
+                result = subprocess.run(
+                    [brightnessctl, "set", f"{level}%"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    return True
+        except Exception:
+            pass
+    
+    # Try xrandr as fallback
+    xrandr = shutil.which("xrandr")
+    if xrandr:
+        try:
+            # Get current brightness
+            current_brightness = get_current_brightness()
+            
+            if action == "BRIGHTNESS_UP":
+                new_brightness = min(1.0, current_brightness + 0.05)
+            elif action == "BRIGHTNESS_DOWN":
+                new_brightness = max(0.1, current_brightness - 0.05)
+            elif action == "SET_BRIGHTNESS" and level is not None:
+                level = max(0, min(100, level))
+                new_brightness = level / 100.0
+            else:
+                return False
+            
+            # Get the connected display
+            result = subprocess.run(
+                [xrandr, "--query"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            
+            if result.returncode == 0:
+                display = None
+                for line in result.stdout.splitlines():
+                    if " connected" in line:
+                        display = line.split()[0]
+                        break
+                
+                if display:
+                    result = subprocess.run(
+                        [xrandr, "--output", display, "--brightness", str(new_brightness)],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode == 0:
+                        return True
+        except Exception:
+            pass
+    
+    return False
+
+
+def get_current_brightness() -> float:
+    """Get current screen brightness level (0.0 to 1.0)"""
+    # Try brightnessctl first
+    brightnessctl = shutil.which("brightnessctl")
+    if brightnessctl:
+        try:
+            result = subprocess.run(
+                [brightnessctl, "get"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                current = int(result.stdout.strip())
+                result_max = subprocess.run(
+                    [brightnessctl, "max"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if result_max.returncode == 0:
+                    max_val = int(result_max.stdout.strip())
+                    if max_val > 0:
+                        return current / max_val
+        except Exception:
+            pass
+    
+    # Default to 1.0 (100%) if cannot determine
+    return 1.0
+
+
 def process_tree_pids(root_pid: int):
     output = run_command(["ps", "-eo", "pid=,ppid="])
     children_by_parent = {}
@@ -1624,6 +1743,46 @@ class WebSocketControlServer(threading.Thread):
                             "status": "error",
                             "type": "sound_set",
                             "message": f"Failed to set sound device: {exc}"
+                        }))
+                    continue
+
+                # Handle Brightness get request
+                if message_type == "get_brightness":
+                    try:
+                        current_brightness = int(get_current_brightness() * 100)
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "brightness_level",
+                            "brightness": current_brightness,
+                            "message": f"Current brightness: {current_brightness}%"
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to get brightness from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "brightness_level",
+                            "message": f"Failed to get brightness: {exc}"
+                        }))
+                    continue
+
+                # Handle Brightness set request
+                if message_type == "set_brightness":
+                    brightness_level = int(payload.get("brightness", 50))
+                    try:
+                        success = control_system_brightness("SET_BRIGHTNESS", brightness_level)
+                        await websocket.send(json.dumps({
+                            "status": "ok" if success else "error",
+                            "type": "brightness_set",
+                            "success": success,
+                            "brightness": brightness_level,
+                            "message": f"Brightness set to {brightness_level}%" if success else "Failed to set brightness"
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to set brightness from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "brightness_set",
+                            "message": f"Failed to set brightness: {exc}"
                         }))
                     continue
 
@@ -2824,6 +2983,113 @@ class SoundDialog(QDialog):
         return moved_count
 
 
+class BrightnessDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        metrics = dialog_metrics()
+        self.setWindowTitle("Brightness Settings")
+        self.setModal(True)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+
+        title = QLabel("Brightness Settings")
+        title.setObjectName("dialogTitle")
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
+        layout.addWidget(title)
+
+        brightness_panel = QWidget()
+        brightness_layout = QVBoxLayout(brightness_panel)
+        brightness_layout.setContentsMargins(0, 0, 0, 0)
+        brightness_layout.setSpacing(metrics["dialog_spacing"])
+
+        brightness_title = QLabel("Screen Brightness")
+        brightness_title.setObjectName("dialogSection")
+        brightness_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
+        brightness_layout.addWidget(brightness_title)
+
+        brightness_subtitle = QLabel("Adjust the brightness level of your display.")
+        brightness_subtitle.setObjectName("dialogSubtitle")
+        brightness_subtitle.setWordWrap(True)
+        brightness_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        brightness_layout.addWidget(brightness_subtitle)
+
+        # Brightness slider
+        slider_row = QHBoxLayout()
+        brightness_icon_label = QLabel()
+        brightness_icon_path = resource_path("icons/brightness.png")
+        if brightness_icon_path.exists():
+            pixmap = QPixmap(str(brightness_icon_path))
+            if not pixmap.isNull():
+                scaled_pixmap = pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                brightness_icon_label.setPixmap(scaled_pixmap)
+        brightness_icon_label.setFixedSize(24, 24)
+        slider_row.addWidget(brightness_icon_label)
+
+        self.brightness_slider = QSlider(Qt.Horizontal)
+        self.brightness_slider.setMinimum(0)
+        self.brightness_slider.setMaximum(100)
+        self.brightness_slider.setValue(int(get_current_brightness() * 100))
+        self.brightness_slider.setMinimumHeight(metrics["input_min_height"])
+        self.brightness_slider.valueChanged.connect(self.on_brightness_changed)
+        slider_row.addWidget(self.brightness_slider, 1)
+
+        self.brightness_value_label = QLabel(f"{self.brightness_slider.value()}%")
+        self.brightness_value_label.setObjectName("dialogStatus")
+        self.brightness_value_label.setFont(QFont("Sans Serif", metrics["subtitle_font"], QFont.Bold))
+        self.brightness_value_label.setFixedWidth(50)
+        self.brightness_value_label.setAlignment(Qt.AlignRight)
+        slider_row.addWidget(self.brightness_value_label)
+
+        brightness_layout.addLayout(slider_row)
+
+        # Quick preset buttons
+        preset_row = QHBoxLayout()
+        for preset_value in [25, 50, 75, 100]:
+            preset_button = QPushButton(f"{preset_value}%")
+            preset_button.setProperty("tileVariant", "dialogSecondary")
+            preset_button.setFixedHeight(36)
+            preset_button.clicked.connect(lambda checked, val=preset_value: self.set_brightness_preset(val))
+            preset_row.addWidget(preset_button)
+        
+        brightness_layout.addLayout(preset_row)
+
+        self.brightness_status_label = QLabel("")
+        self.brightness_status_label.setObjectName("dialogStatus")
+        self.brightness_status_label.setWordWrap(True)
+        brightness_layout.addWidget(self.brightness_status_label)
+
+        layout.addWidget(brightness_panel, 1)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        close_button = QPushButton("Close")
+        close_button.setProperty("tileVariant", "dialogSecondary")
+        close_button.clicked.connect(self.reject)
+        button_row.addWidget(close_button)
+
+        layout.addLayout(button_row)
+
+        self.setStyleSheet(dialog_stylesheet(metrics))
+
+    def on_brightness_changed(self, value):
+        """Handle brightness slider change"""
+        self.brightness_value_label.setText(f"{value}%")
+        success = control_system_brightness("SET_BRIGHTNESS", value)
+        if success:
+            self.brightness_status_label.setText(f"Brightness set to {value}%")
+        else:
+            self.brightness_status_label.setText("Failed to adjust brightness. Try installing brightnessctl.")
+
+    def set_brightness_preset(self, value):
+        """Set brightness to a preset value"""
+        self.brightness_slider.setValue(value)
+
+
 class SettingsDialog(QDialog):
     def __init__(
         self,
@@ -3441,6 +3707,20 @@ class LauncherWindow(QMainWindow):
         sound_button.clicked.connect(self.open_sound_settings)
         hero_top_row.addWidget(sound_button)
 
+        # Brightness button
+        brightness_button = QToolButton()
+        brightness_button.setObjectName("brightnessButton")
+        brightness_icon_path = resource_path("icons/brightness.png")
+        if brightness_icon_path.exists():
+            white_icon = create_white_icon(str(brightness_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            brightness_button.setIcon(white_icon)
+            brightness_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
+        brightness_button.setToolTip("Brightness Settings")
+        brightness_button.setCursor(Qt.PointingHandCursor)
+        brightness_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        brightness_button.clicked.connect(self.open_brightness_settings)
+        hero_top_row.addWidget(brightness_button)
+
         # Shutdown button
         shutdown_button = QToolButton()
         shutdown_button.setObjectName("shutdownButton")
@@ -3650,6 +3930,22 @@ class LauncherWindow(QMainWindow):
             }
             QToolButton#soundButton:pressed {
                 background: rgba(63, 185, 80, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#brightnessButton {
+                background: transparent;
+                color: #d29922;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#brightnessButton:hover {
+                background: rgba(210, 153, 34, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #e3b341;
+            }
+            QToolButton#brightnessButton:pressed {
+                background: rgba(210, 153, 34, 0.25);
                 border-radius: __SETTINGS_RADIUS__px;
             }
             QLabel#heroTitle {
@@ -4517,6 +4813,11 @@ class LauncherWindow(QMainWindow):
     def open_sound_settings(self):
         """Open the Sound settings dialog"""
         dialog = SoundDialog(self)
+        dialog.exec()
+
+    def open_brightness_settings(self):
+        """Open the Brightness settings dialog"""
+        dialog = BrightnessDialog(self)
         dialog.exec()
 
     def scan_wifi_networks(self):
@@ -5646,6 +5947,10 @@ class LauncherWindow(QMainWindow):
 
         if action in ("VOLUME_UP", "VOLUME_DOWN", "MUTE"):
             control_system_volume(action)
+            return
+
+        if action in ("BRIGHTNESS_UP", "BRIGHTNESS_DOWN"):
+            control_system_brightness(action)
             return
 
         if action == "TOGGLE_FULLSCREEN":
