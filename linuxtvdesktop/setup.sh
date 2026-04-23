@@ -228,6 +228,7 @@ sudo tee -a "$RUNTIME_HOME/.profile" > /dev/null <<EOF
 
 # Auto-start X and launcher on tty1
 if [ -z "\$DISPLAY" ] && [ "\$(tty)" = "/dev/tty1" ]; then
+  clear >/dev/null 2>&1
   # Track startup attempts
   STARTUP_COUNT=\${STARTUP_COUNT:-0}
   export STARTUP_COUNT=\$((STARTUP_COUNT + 1))
@@ -239,7 +240,7 @@ if [ -z "\$DISPLAY" ] && [ "\$(tty)" = "/dev/tty1" ]; then
     echo "To troubleshoot, try: $VENV_DIR/bin/python3 $INSTALL_DIR/linuxtvdesktop/launcher.py"
     echo ""
   else
-    exec startx
+    exec startx >/dev/null 2>&1
   fi
 fi
 EOF
@@ -252,7 +253,8 @@ sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
 sudo tee /etc/systemd/system/getty@tty1.service.d/override.conf > /dev/null <<EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin $RUNTIME_USER --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin $RUNTIME_USER --noclear --noissue --nohostname %I \$TERM
+StandardOutput=null
 EOF
 sudo systemctl daemon-reload
 echo "✓ Auto-login configured"

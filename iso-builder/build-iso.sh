@@ -66,7 +66,7 @@ lb config \
   --binary-images iso-hybrid \
   --iso-application "LinuxTV" \
   --iso-volume "LinuxTV" \
-  --bootappend-live "boot=live components quiet splash persistence" \
+  --bootappend-live "boot=live components quiet splash loglevel=0 vt.global_cursor_default=0 persistence" \
   --linux-flavours amd64 \
   --apt-recommends false \
   --debian-installer-gui false

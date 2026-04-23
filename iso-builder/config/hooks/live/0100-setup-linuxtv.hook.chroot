@@ -121,19 +121,22 @@ mkdir -p /etc/systemd/system/getty@.service.d
 cat > /etc/systemd/system/getty@.service.d/override.conf <<EOF
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin ${LINUXTV_USER} --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin ${LINUXTV_USER} --noclear --noissue --nohostname %I \$TERM
+StandardInput=tty
+StandardOutput=null
 EOF
 
 cat >> "/home/${LINUXTV_USER}/.profile" <<'PROFILE'
 
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+  clear >/dev/null 2>&1
   STARTUP_COUNT=${STARTUP_COUNT:-0}
   export STARTUP_COUNT=$((STARTUP_COUNT + 1))
   if [ $STARTUP_COUNT -gt 3 ]; then
     echo "LinuxTV startup failed multiple times."
     echo "Debug: cat /tmp/linuxtv_startup.log"
   else
-    exec startx
+    exec startx >/dev/null 2>&1
   fi
 fi
 PROFILE
