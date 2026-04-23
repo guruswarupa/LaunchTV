@@ -1544,17 +1544,22 @@ export default function RemoteScreen() {
   // Listen to hardware volume button events from Android native code
   useEffect(() => {
     // Only intercept volume buttons when connected and not on keyboard tab
-    if (repositoryState.status !== 'Connected' || repositoryState.isDemoMode) {
+    if (repositoryState.status !== 'Connected' || repositoryState.isDemoMode || activeTab === 'keyboard') {
+      console.log('Volume buttons disabled - status:', repositoryState.status, 'demo:', repositoryState.isDemoMode, 'tab:', activeTab);
       return;
     }
 
+    console.log('Volume buttons enabled for tab:', activeTab);
     const subscription = DeviceEventEmitter.addListener(
       'volumeButtonPressed',
       (params: { direction: string }) => {
-        // Send volume command to desktop
+        console.log('Volume button pressed:', params.direction);
+        // Update local volume state and send command to desktop
         if (params.direction === 'up') {
+          setVolumeLevel(prev => Math.min(prev + 5, 100));
           sendAction('VOLUME_UP');
         } else if (params.direction === 'down') {
+          setVolumeLevel(prev => Math.max(prev - 5, 0));
           sendAction('VOLUME_DOWN');
         }
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

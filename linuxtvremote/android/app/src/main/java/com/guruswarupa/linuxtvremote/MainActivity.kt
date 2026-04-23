@@ -3,7 +3,9 @@ import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.KeyEvent
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -17,6 +19,8 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+  private var wakeLock: PowerManager.WakeLock? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
@@ -26,6 +30,48 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+    
+    // Initialize wake lock for showing over lockscreen
+    val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+    wakeLock = powerManager.newWakeLock(
+      PowerManager.FULL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+      "LinuxTVRemote::WakeLock"
+    )
+  }
+
+  override fun onResume() {
+    super.onResume()
+    // Wake up the screen and show over lockscreen
+    wakeLock?.acquire()
+    
+    // For older Android versions, use window flags
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+      window.addFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+      )
+    }
+  }
+
+  override fun onPause() {
+    super.onPause()
+    // Release wake lock when app goes to background
+    wakeLock?.release()
+    
+    // Remove window flags for older Android versions
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+      window.clearFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+      )
+    }
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    wakeLock?.release()
   }
 
   /**
@@ -73,20 +119,47 @@ class MainActivity : ReactActivity() {
    */
   override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
     if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-      sendVolumeEventToJS(if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) "up" else "down")
+      val direction = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) "up" else "down"
+      android.util.Log.d("MainActivity", "Volume button pressed: $direction")
+      sendVolumeEventToJS(direction)
       return true // Consume the event
     }
     return super.onKeyDown(keyCode, event)
   }
 
   private fun sendVolumeEventToJS(direction: String) {
-    val reactContext = reactInstanceManager?.currentReactContext
-    if (reactContext != null) {
-      val params: WritableMap = Arguments.createMap()
-      params.putString("direction", direction)
-      reactContext
-        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-        .emit("volumeButtonPressed", params)
+    try {
+      // Access ReactHost through the MainApplication (newer API for React Native)
+      val application = application as MainApplication
+      val reactHost = application.reactHost
+      
+      android.util.Log.d("MainActivity", "ReactHost: $reactHost")
+      
+      if (reactHost == null) {
+        android.util.Log.w("MainActivity", "ReactHost is null")
+        return
+      }
+      
+      // Get the current React context from ReactHost
+      val reactContext = reactHost.currentReactContext
+      android.util.Log.d("MainActivity", "ReactContext from ReactHost: $reactContext")
+      
+      if (reactContext != null) {
+        val params: WritableMap = Arguments.createMap()
+        params.putString("direction", direction)
+        android.util.Log.d("MainActivity", "Emitting volumeButtonPressed event: $direction")
+        reactContext
+          .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+          .emit("volumeButtonPressed", params)
+      } else {
+        android.util.Log.w("MainActivity", "ReactContext is null - will retry")
+        // Retry after a short delay
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+          sendVolumeEventToJS(direction)
+        }, 100)
+      }
+    } catch (e: Exception) {
+      android.util.Log.e("MainActivity", "Failed to send volume event to JS: ${e.message}", e)
     }
   }
 }
