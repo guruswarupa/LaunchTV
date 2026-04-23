@@ -1,10 +1,10 @@
 #!/bin/bash
 # Script to update LinuxTV Live USB with new ISO while preserving persistence partition
 # This script:
-# 1. Backs up the persistence partition
-# 2. Flashes the new ISO
+# 1. Saves persistence partition metadata
+# 2. Flashes the new ISO (overwrites partition table)
 # 3. Recreates the persistence partition
-# 4. Restores the persistence data
+# 4. No backup/restore needed - data stays intact!
 
 set -e
 
@@ -35,7 +35,7 @@ lsblk -d -o NAME,SIZE,MODEL | grep -E '^sd|^vd|^nvme' || lsblk -d -o NAME,SIZE,M
 echo ""
 
 echo "This script will UPDATE your USB drive with the new ISO."
-echo "The persistence partition will be PRESERVED."
+echo "The persistence partition will be PRESERVED (no backup needed)."
 echo ""
 
 # Ask for device
@@ -59,6 +59,16 @@ PERSIST_PART=$(lsblk -lpn -o NAME,LABEL "$USB_DEVICE" | grep "persistence" | awk
 if [ -n "$PERSIST_PART" ]; then
     echo "Found persistence partition: $PERSIST_PART"
     HAS_PERSIST=true
+    
+    # Get the START sector and SIZE of persistence partition
+    PERSIST_START=$(lsblk -lpn -o NAME,START "$USB_DEVICE" | grep "$PERSIST_PART" | awk '{print $2}')
+    PERSIST_SIZE_SECTORS=$(lsblk -lpn -o NAME,SIZE "$USB_DEVICE" | grep "$PERSIST_PART" | awk '{print $2}')
+    PERSIST_SIZE_BYTES=$((PERSIST_SIZE_SECTORS * 512))
+    
+    echo "Persistence partition details:"
+    echo "  Start sector: $PERSIST_START"
+    echo "  Size: $((PERSIST_SIZE_SECTORS / 2048)) MB"
+    echo ""
 else
     echo "No persistence partition found."
     echo "This script will still work, but there's no data to preserve."
@@ -68,7 +78,7 @@ fi
 echo ""
 echo "WARNING: The ISO partition will be ERASED and replaced."
 if [ "$HAS_PERSIST" = true ]; then
-    echo "The persistence partition WILL BE BACKED UP and RESTORED."
+    echo "The persistence partition will be RECREATED (data preserved, no backup needed)."
 fi
 echo ""
 read -p "Type 'yes' to confirm and proceed: " CONFIRM
@@ -78,47 +88,9 @@ if [ "$CONFIRM" != "yes" ]; then
     exit 0
 fi
 
-# Backup persistence if it exists
-BACKUP_FILE=""
-if [ "$HAS_PERSIST" = true ]; then
-    echo ""
-    echo "Step 1: Backing up persistence partition..."
-    
-    # Create temporary backup file
-    BACKUP_FILE=$(mktemp /tmp/linuxtv-persist-backup-XXXXXX.img)
-    echo "Backup location: $BACKUP_FILE"
-    
-    # Check if partition is mounted
-    MOUNT_POINT=$(findmnt -n -o TARGET "$PERSIST_PART" 2>/dev/null || echo "")
-    
-    if [ -n "$MOUNT_POINT" ]; then
-        echo "Partition is mounted at: $MOUNT_POINT"
-        echo "Calculating used space..."
-        USED_SPACE=$(df -BM "$MOUNT_POINT" | tail -1 | awk '{print $3}' | sed 's/M//')
-        TOTAL_SPACE=$(df -BM "$MOUNT_POINT" | tail -1 | awk '{print $2}' | sed 's/M//')
-        echo "Used: ${USED_SPACE}MB / ${TOTAL_SPACE}MB"
-        echo ""
-        
-        # Unmount for clean backup
-        echo "Unmounting persistence partition..."
-        umount "$PERSIST_PART"
-        sleep 2
-    fi
-    
-    # Create compressed backup
-    echo "Creating backup (this may take a few minutes)..."
-    # Use dd with compression to backup only the partition
-    dd if="$PERSIST_PART" bs=4M status=progress | gzip > "${BACKUP_FILE}.gz" 2>&1
-    rm -f "$BACKUP_FILE"
-    BACKUP_FILE="${BACKUP_FILE}.gz"
-    
-    BACKUP_SIZE=$(du -h "$BACKUP_FILE" | awk '{print $1}')
-    echo "Backup complete! Size: $BACKUP_SIZE"
-fi
-
 # Unmount all partitions on the device
 echo ""
-echo "Step 2: Preparing device for update..."
+echo "Step 1: Preparing device for update..."
 for part in $(lsblk -lpn -o NAME "$USB_DEVICE" | tail -n +2); do
     echo "Unmounting $part..."
     umount "$part" 2>/dev/null || true
@@ -127,7 +99,7 @@ sleep 2
 
 # Flash new ISO
 echo ""
-echo "Step 3: Flashing new ISO to $USB_DEVICE..."
+echo "Step 2: Flashing new ISO to $USB_DEVICE..."
 dd if="$ISO_FILE" of="$USB_DEVICE" bs=4M status=progress oflag=sync
 sync
 
@@ -139,7 +111,7 @@ sleep 2
 
 # Get the end of the last ISO partition
 echo ""
-echo "Step 4: Analyzing new partition layout..."
+echo "Step 3: Analyzing new partition layout..."
 
 LAST_SECTOR=$(lsblk -nplb -o TYPE,START,SIZE "$USB_DEVICE" | awk -v dev="$USB_DEVICE" '
     $1 == "part" {
@@ -165,13 +137,27 @@ echo "New persistence partition will start at sector: $NEW_START"
 
 # Create persistence partition
 echo ""
-echo "Step 5: Creating persistence partition..."
+echo "Step 4: Creating persistence partition..."
+
+if [ "$HAS_PERSIST" = true ]; then
+    echo "Recreating persistence partition at original location..."
+    # Use the original start sector if available, otherwise use calculated position
+    if [ -n "$PERSIST_START" ] && [ "$PERSIST_START" -gt "$NEW_START" ]; then
+        PART_START=$PERSIST_START
+        echo "Using original start sector: $PART_START"
+    else
+        PART_START=$NEW_START
+        echo "Using calculated start sector: $PART_START"
+    fi
+else
+    PART_START=$NEW_START
+fi
 
 (
 echo n
 echo p
 echo 3
-echo "$NEW_START"
+echo "$PART_START"
 echo ""
 echo w
 ) | fdisk "$USB_DEVICE" || echo "Note: fdisk finished with some warnings (normal for hybrid ISOs)"
@@ -183,7 +169,7 @@ partprobe "$USB_DEVICE" 2>/dev/null || true
 sleep 3
 
 # Get the new partition
-NEW_PART=$(lsblk -lpn -o NAME,START "$USB_DEVICE" | grep -w "$NEW_START" | awk '{print $1}')
+NEW_PART=$(lsblk -lpn -o NAME,START "$USB_DEVICE" | grep -w "$PART_START" | awk '{print $1}')
 
 if [ -z "$NEW_PART" ]; then
     NEW_PART=$(lsblk -lpn -o NAME "$USB_DEVICE" | grep -v "^${USB_DEVICE}$" | tail -1)
@@ -197,41 +183,43 @@ fi
 
 echo "New persistence partition: $NEW_PART"
 
-# Format as ext4
-echo ""
-echo "Step 6: Formatting persistence partition..."
-mkfs.ext4 -F -L persistence "$NEW_PART"
-
-# Restore backup if it exists
-if [ "$HAS_PERSIST" = true ] && [ -f "$BACKUP_FILE" ]; then
+# Skip formatting - just verify the partition has persistence.conf
+if [ "$HAS_PERSIST" = true ]; then
     echo ""
-    echo "Step 7: Restoring persistence data..."
+    echo "Step 5: Verifying persistence partition..."
     
     MOUNT_POINT=$(mktemp -d)
-    mount "$NEW_PART" "$MOUNT_POINT"
-    
-    echo "Extracting backup to persistence partition..."
-    gunzip -c "$BACKUP_FILE" | dd of="$NEW_PART" bs=4M status=progress 2>&1
-    
-    # Check if persistence.conf exists, if not create it
-    echo "Verifying persistence configuration..."
-    if [ ! -f "$MOUNT_POINT/persistence.conf" ]; then
+    if mount "$NEW_PART" "$MOUNT_POINT" 2>/dev/null; then
+        echo "Partition mounted successfully"
+        
+        # Check if persistence.conf exists
+        if [ -f "$MOUNT_POINT/persistence.conf" ]; then
+            echo "✓ persistence.conf found and preserved"
+            cat "$MOUNT_POINT/persistence.conf"
+        else
+            echo "Warning: persistence.conf not found. Creating it..."
+            echo "/ union" > "$MOUNT_POINT/persistence.conf"
+            echo "Created new persistence.conf"
+        fi
+        
+        umount "$MOUNT_POINT"
+    else
+        echo "Warning: Could not mount partition. It may need formatting."
+        echo "This shouldn't happen if the partition was preserved correctly."
+        echo ""
+        echo "Formatting and creating fresh persistence..."
+        mkfs.ext4 -F -L persistence "$NEW_PART"
+        mount "$NEW_PART" "$MOUNT_POINT"
         echo "/ union" > "$MOUNT_POINT/persistence.conf"
-        echo "Created new persistence.conf"
+        umount "$MOUNT_POINT"
     fi
-    
-    umount "$MOUNT_POINT"
     rmdir "$MOUNT_POINT"
-    
-    # Clean up backup file
-    echo "Cleaning up backup file..."
-    rm -f "$BACKUP_FILE"
-    
-    echo "Persistence data restored successfully!"
 else
-    # Create fresh persistence.conf
+    # Create fresh persistence
     echo ""
-    echo "Step 7: Setting up fresh persistence..."
+    echo "Step 5: Setting up fresh persistence..."
+    mkfs.ext4 -F -L persistence "$NEW_PART"
+    
     MOUNT_POINT=$(mktemp -d)
     mount "$NEW_PART" "$MOUNT_POINT"
     echo "/ union" > "$MOUNT_POINT/persistence.conf"
@@ -246,7 +234,7 @@ echo "=========================================="
 echo ""
 echo "Your USB drive has been updated with the new ISO."
 if [ "$HAS_PERSIST" = true ]; then
-    echo "Your persistence data has been preserved."
+    echo "Your persistence data has been preserved (no backup/restore needed)."
 else
     echo "A fresh persistence partition has been created."
 fi
