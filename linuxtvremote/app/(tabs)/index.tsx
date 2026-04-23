@@ -225,6 +225,7 @@ export default function RemoteScreen() {
   const repeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const touchpadGestureRef = useRef({ lastDx: 0, lastDy: 0 });
+  const scrollGestureRef = useRef({ lastScrollTime: 0 });
 
   const applyRepositoryUpdate = (update: Partial<RepositoryState>) => {
     setRepositoryState((current) => ({ ...current, ...update }));
@@ -2429,11 +2430,61 @@ export default function RemoteScreen() {
 
             {activeTab === 'touchpad' && (
               <View style={styles.touchpadContainer}>
-                <View style={styles.touchpadSurface} {...touchpadResponder.panHandlers}>
-                  <View style={styles.touchpadInner}>
-                    <Ionicons name="hand-left" size={48} color="#58a6ff" />
-                    <Text style={styles.touchpadText}>Touchpad</Text>
-                    <Text style={styles.touchpadHint}>Tap to click • Drag to move</Text>
+                <View style={styles.touchpadWrapper}>
+                  <View style={styles.touchpadSurface} {...touchpadResponder.panHandlers}>
+                    <View style={styles.touchpadInner}>
+                      <Ionicons name="hand-left" size={48} color="#58a6ff" />
+                      <Text style={styles.touchpadText}>Touchpad</Text>
+                      <Text style={styles.touchpadHint}>Tap to click • Drag to move</Text>
+                    </View>
+                  </View>
+                  <View style={styles.scrollBar}>
+                    <Pressable
+                      style={styles.scrollButton}
+                      onPress={() => {
+                        // Send scroll up event
+                        repositoryRef.current?.sendPointerEvent('scroll', { dx: 0, dy: -1 });
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}>
+                      <Ionicons name="chevron-up" size={24} color="#8b949e" />
+                    </Pressable>
+                    <View
+                      style={styles.scrollTrack}
+                      {...PanResponder.create({
+                        onStartShouldSetPanResponder: () => true,
+                        onMoveShouldSetPanResponder: () => true,
+                        onPanResponderMove: (evt, gestureState) => {
+                          const now = Date.now();
+                          const timeSinceLastScroll = now - scrollGestureRef.current.lastScrollTime;
+                          
+                          // Throttle scroll events to max 10 per second
+                          if (timeSinceLastScroll < 100) {
+                            return;
+                          }
+                          
+                          if (gestureState.dy < -10) {
+                            // Send scroll down event (swipe up = scroll down)
+                            repositoryRef.current?.sendPointerEvent('scroll', { dx: 0, dy: 1 });
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            scrollGestureRef.current.lastScrollTime = now;
+                          } else if (gestureState.dy > 10) {
+                            // Send scroll up event (swipe down = scroll up)
+                            repositoryRef.current?.sendPointerEvent('scroll', { dx: 0, dy: -1 });
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            scrollGestureRef.current.lastScrollTime = now;
+                          }
+                        },
+                      }).panHandlers}
+                    />
+                    <Pressable
+                      style={styles.scrollButton}
+                      onPress={() => {
+                        // Send scroll down event
+                        repositoryRef.current?.sendPointerEvent('scroll', { dx: 0, dy: 1 });
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }}>
+                      <Ionicons name="chevron-down" size={24} color="#8b949e" />
+                    </Pressable>
                   </View>
                 </View>
                 <View style={styles.touchpadButtons}>
@@ -3912,6 +3963,11 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
+  touchpadWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+  },
   touchpadSurface: {
     flex: 1,
     borderRadius: 20,
@@ -3939,6 +3995,30 @@ const styles = StyleSheet.create({
   touchpadHint: {
     color: '#8b949e',
     fontSize: 13,
+  },
+  scrollBar: {
+    width: 50,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 4,
+  },
+  scrollButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 10,
+    backgroundColor: '#21262d',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollTrack: {
+    flex: 1,
+    width: 50,
+    borderRadius: 10,
+    backgroundColor: '#0d1117',
+    borderWidth: 1,
+    borderColor: '#30363d',
   },
   touchpadButtons: {
     flexDirection: 'row',

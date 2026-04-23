@@ -6367,11 +6367,11 @@ class LauncherWindow(QMainWindow):
                 dx = int(round(float(event.get("dx", 0))))
                 dy = int(round(float(event.get("dy", 0))))
                 # Use xdotool to simulate mouse wheel
-                # Positive dy = scroll up (button 4), Negative dy = scroll down (button 5)
+                # Negative dy = scroll up (button 4), Positive dy = scroll down (button 5)
                 # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
-                if dy > 0:
+                if dy < 0:
                     subprocess.run([xdotool, "click", "4"], check=False)
-                elif dy < 0:
+                elif dy > 0:
                     subprocess.run([xdotool, "click", "5"], check=False)
                 if dx > 0:
                     subprocess.run([xdotool, "click", "6"], check=False)
@@ -6413,11 +6413,11 @@ class LauncherWindow(QMainWindow):
             # Focus the target window first
             self.focus_remote_target_window(xdotool, target_window)
             # Use xdotool to simulate mouse wheel
-            # Positive dy = scroll up (button 4), Negative dy = scroll down (button 5)
+            # Negative dy = scroll up (button 4), Positive dy = scroll down (button 5)
             # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
-            if dy > 0:
+            if dy < 0:
                 subprocess.run([xdotool, "click", "4"], check=False)
-            elif dy < 0:
+            elif dy > 0:
                 subprocess.run([xdotool, "click", "5"], check=False)
             if dx > 0:
                 subprocess.run([xdotool, "click", "6"], check=False)

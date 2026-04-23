@@ -44,7 +44,7 @@ export type RepositoryState = {
   brightnessLevel?: number;
 };
 
-export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click';
+export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click' | 'scroll';
 export type SpecialKey = 'ENTER' | 'SPACE' | 'BACKSPACE' | 'ESCAPE' | 'TAB';
 
 export interface RemoteRepository {
