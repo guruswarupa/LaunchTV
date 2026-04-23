@@ -830,6 +830,69 @@ def maintain_hdmi_audio(stop_event: threading.Event, duration_seconds: int = 20)
         stop_event.wait(2)
 
 
+def get_current_volume():
+    """Get current system volume percentage"""
+    import re
+    
+    # Try wpctl first
+    wpctl = shutil.which("wpctl")
+    if wpctl:
+        try:
+            result = subprocess.run(
+                [wpctl, "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                # Output format: "Volume: 0.50" or "Volume: 0.50 [MUTED]"
+                match = re.search(r'Volume:\s+([\d.]+)', result.stdout)
+                if match:
+                    volume = float(match.group(1))
+                    return int(volume * 100)
+        except Exception:
+            pass
+    
+    # Try pactl
+    pactl = shutil.which("pactl")
+    if pactl:
+        try:
+            result = subprocess.run(
+                [pactl, "get-sink-volume", "@DEFAULT_SINK@"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                # Output format: "Volume: front-left: 32768 /  50% / -18.06 dB, ..."
+                match = re.search(r'(\d+)%', result.stdout)
+                if match:
+                    return int(match.group(1))
+        except Exception:
+            pass
+    
+    # Try amixer
+    amixer = shutil.which("amixer")
+    if amixer:
+        try:
+            result = subprocess.run(
+                [amixer, "get", "Master"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                # Output contains: "[50%]" or "[on]"/"[off]"
+                match = re.search(r'\[(\d+)%\]', result.stdout)
+                if match:
+                    return int(match.group(1))
+        except Exception:
+            pass
+    
+    logging.warning("Could not get current volume")
+    return 50  # Default fallback
+
+
 def control_system_volume(action: str):
     action = action.upper().strip()
 
@@ -1788,6 +1851,25 @@ class WebSocketControlServer(threading.Thread):
                             "status": "error",
                             "type": "sound_set",
                             "message": f"Failed to set sound device: {exc}"
+                        }))
+                    continue
+
+                # Handle Volume get request
+                if message_type == "get_volume":
+                    try:
+                        current_volume = get_current_volume()
+                        await websocket.send(json.dumps({
+                            "status": "ok",
+                            "type": "volume_level",
+                            "volume": current_volume,
+                            "message": f"Current volume: {current_volume}%"
+                        }))
+                    except Exception as exc:
+                        logging.exception("Failed to get volume from remote")
+                        await websocket.send(json.dumps({
+                            "status": "error",
+                            "type": "volume_level",
+                            "message": f"Failed to get volume: {exc}"
                         }))
                     continue
 

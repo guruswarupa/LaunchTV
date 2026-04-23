@@ -1145,6 +1145,28 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const fetchVolumeLevel = async () => {
+    if (repositoryState.isDemoMode) return;
+    
+    try {
+      console.log('[Remote] Fetching volume level...');
+      sendSettingsRequest('get_volume', {});
+    } catch (error) {
+      console.warn('Failed to fetch volume:', error);
+    }
+  };
+
+  const fetchBrightnessLevel = async () => {
+    if (repositoryState.isDemoMode) return;
+    
+    try {
+      console.log('[Remote] Fetching brightness level...');
+      sendSettingsRequest('get_brightness', {});
+    } catch (error) {
+      console.warn('Failed to fetch brightness:', error);
+    }
+  };
+
   const setBrightness = (level: number) => {
     setBrightnessLevel(level);
     // Send WebSocket message to set brightness
@@ -1460,6 +1482,33 @@ export default function RemoteScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, activeSystem?.id, repositoryState.isDemoMode]);
 
+  // Fetch volume and brightness levels when remote tab is active and connected
+  useEffect(() => {
+    if (activeTab !== 'remote' || repositoryState.isDemoMode || !activeSystem?.ipAddress || repositoryState.status !== 'Connected') {
+      return;
+    }
+
+    // Fetch fresh values from desktop
+    fetchVolumeLevel();
+    fetchBrightnessLevel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, activeSystem?.id, repositoryState.isDemoMode, repositoryState.status]);
+
+  // Update local state when repository state changes
+  useEffect(() => {
+    if (repositoryState.volumeLevel !== undefined) {
+      console.log('[Remote] Setting volume to:', repositoryState.volumeLevel);
+      setVolumeLevel(repositoryState.volumeLevel);
+    }
+  }, [repositoryState.volumeLevel]);
+
+  useEffect(() => {
+    if (repositoryState.brightnessLevel !== undefined) {
+      console.log('[Remote] Setting brightness to:', repositoryState.brightnessLevel);
+      setBrightnessLevel(repositoryState.brightnessLevel);
+    }
+  }, [repositoryState.brightnessLevel]);
+
   const showLoginScreen = !hasSavedSetup;
   const normalizedKodiSearchQuery = kodiSearchQuery.trim().toLowerCase();
   const filteredKodiGroups = normalizedKodiSearchQuery
@@ -1668,74 +1717,128 @@ export default function RemoteScreen() {
                 contentContainerStyle={styles.remoteScrollContent}
                 showsVerticalScrollIndicator={false}>
                 <View style={styles.remoteControl}>
-                  {/* Modern D-Pad */}
-                  <View style={styles.dpadContainer}>
-                    <View style={styles.dpadCircle}>
-                      {/* Top Button */}
-                      <Pressable
-                        style={({ pressed }) => [styles.dpadButton, styles.dpadTop, pressed && styles.pressed]}
-                        onPressIn={() => {
-                          createRepeatingActionHandlers('UP').onPressIn();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        onPressOut={() => {
-                          createRepeatingActionHandlers('UP').onPressOut();
-                        }}
-                        onPress={() => sendAction('UP')}>
-                        <Ionicons name="caret-up" size={36} color="#f0f6fc" />
-                      </Pressable>
-                      
-                      {/* Left Button */}
-                      <Pressable
-                        style={({ pressed }) => [styles.dpadButton, styles.dpadLeft, pressed && styles.pressed]}
-                        onPressIn={() => {
-                          createRepeatingActionHandlers('LEFT').onPressIn();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        onPressOut={() => {
-                          createRepeatingActionHandlers('LEFT').onPressOut();
-                        }}
-                        onPress={() => sendAction('LEFT')}>
-                        <Ionicons name="caret-back" size={36} color="#f0f6fc" />
-                      </Pressable>
-                      
-                      {/* Center OK Button */}
-                      <Pressable
-                        style={({ pressed }) => [styles.okButton, pressed && styles.pressedOk]}
-                        onPress={() => {
-                          sendAction('SELECT');
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        }}>
-                        <Text style={styles.okButtonText}>OK</Text>
-                      </Pressable>
-                      
-                      {/* Right Button */}
-                      <Pressable
-                        style={({ pressed }) => [styles.dpadButton, styles.dpadRight, pressed && styles.pressed]}
-                        onPressIn={() => {
-                          createRepeatingActionHandlers('RIGHT').onPressIn();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        onPressOut={() => {
-                          createRepeatingActionHandlers('RIGHT').onPressOut();
-                        }}
-                        onPress={() => sendAction('RIGHT')}>
-                        <Ionicons name="caret-forward" size={36} color="#f0f6fc" />
-                      </Pressable>
-                      
-                      {/* Bottom Button */}
-                      <Pressable
-                        style={({ pressed }) => [styles.dpadButton, styles.dpadBottom, pressed && styles.pressed]}
-                        onPressIn={() => {
-                          createRepeatingActionHandlers('DOWN').onPressIn();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        }}
-                        onPressOut={() => {
-                          createRepeatingActionHandlers('DOWN').onPressOut();
-                        }}
-                        onPress={() => sendAction('DOWN')}>
-                        <Ionicons name="caret-down" size={36} color="#f0f6fc" />
-                      </Pressable>
+                  {/* Three Column Layout: Volume | D-Pad | Brightness */}
+                  <View style={styles.controlMainLayout}>
+                    {/* Volume Control - Left */}
+                    <View style={styles.controlCard}>
+                      <View style={styles.controlHeader}>
+                        <Ionicons name="volume-high" size={20} color="#238636" />
+                        <Text style={styles.controlLabel}>Volume</Text>
+                      </View>
+                      <View style={styles.controlSliderVertical}>
+                        <Pressable
+                          style={({ pressed }) => [styles.controlBtn, pressed && styles.pressed]}
+                          onPress={() => adjustVolume('up')}>
+                          <Ionicons name="add" size={24} color="#f0f6fc" />
+                        </Pressable>
+                        <View style={styles.controlTrack}>
+                          <View style={[styles.controlTrackFill, { height: `${volumeLevel}%` }]} />
+                        </View>
+                        <Pressable
+                          style={({ pressed }) => [styles.controlBtn, pressed && styles.pressed]}
+                          onPress={() => adjustVolume('down')}>
+                          <Ionicons name="remove" size={24} color="#f0f6fc" />
+                        </Pressable>
+                      </View>
+                      <Text style={styles.controlValue}>{volumeLevel}%</Text>
+                    </View>
+
+                    {/* Center Column - D-Pad and Controls */}
+                    <View style={styles.centerControlColumn}>
+                      {/* D-Pad */}
+                      <View style={styles.dpadContainer}>
+                        <View style={styles.dpadCircle}>
+                          {/* Top Button */}
+                          <Pressable
+                            style={({ pressed }) => [styles.dpadButton, styles.dpadTop, pressed && styles.pressed]}
+                            onPressIn={() => {
+                              createRepeatingActionHandlers('UP').onPressIn();
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                            onPressOut={() => {
+                              createRepeatingActionHandlers('UP').onPressOut();
+                            }}
+                            onPress={() => sendAction('UP')}>
+                            <Ionicons name="caret-up" size={36} color="#f0f6fc" />
+                          </Pressable>
+                          
+                          {/* Left Button */}
+                          <Pressable
+                            style={({ pressed }) => [styles.dpadButton, styles.dpadLeft, pressed && styles.pressed]}
+                            onPressIn={() => {
+                              createRepeatingActionHandlers('LEFT').onPressIn();
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                            onPressOut={() => {
+                              createRepeatingActionHandlers('LEFT').onPressOut();
+                            }}
+                            onPress={() => sendAction('LEFT')}>
+                            <Ionicons name="caret-back" size={36} color="#f0f6fc" />
+                          </Pressable>
+                          
+                          {/* Center OK Button */}
+                          <Pressable
+                            style={({ pressed }) => [styles.okButton, pressed && styles.pressedOk]}
+                            onPress={() => {
+                              sendAction('SELECT');
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            }}>
+                            <Text style={styles.okButtonText}>OK</Text>
+                          </Pressable>
+                          
+                          {/* Right Button */}
+                          <Pressable
+                            style={({ pressed }) => [styles.dpadButton, styles.dpadRight, pressed && styles.pressed]}
+                            onPressIn={() => {
+                              createRepeatingActionHandlers('RIGHT').onPressIn();
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                            onPressOut={() => {
+                              createRepeatingActionHandlers('RIGHT').onPressOut();
+                            }}
+                            onPress={() => sendAction('RIGHT')}>
+                            <Ionicons name="caret-forward" size={36} color="#f0f6fc" />
+                          </Pressable>
+                          
+                          {/* Bottom Button */}
+                          <Pressable
+                            style={({ pressed }) => [styles.dpadButton, styles.dpadBottom, pressed && styles.pressed]}
+                            onPressIn={() => {
+                              createRepeatingActionHandlers('DOWN').onPressIn();
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            }}
+                            onPressOut={() => {
+                              createRepeatingActionHandlers('DOWN').onPressOut();
+                            }}
+                            onPress={() => sendAction('DOWN')}>
+                            <Ionicons name="caret-down" size={36} color="#f0f6fc" />
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Brightness Control - Right */}
+                    <View style={styles.controlCard}>
+                      <View style={styles.controlHeader}>
+                        <Ionicons name="sunny" size={20} color="#d29922" />
+                        <Text style={styles.controlLabel}>Brightness</Text>
+                      </View>
+                      <View style={styles.controlSliderVertical}>
+                        <Pressable
+                          style={({ pressed }) => [styles.controlBtn, pressed && styles.pressed]}
+                          onPress={() => adjustBrightness('up')}>
+                          <Ionicons name="add" size={24} color="#f0f6fc" />
+                        </Pressable>
+                        <View style={styles.controlTrack}>
+                          <View style={[styles.controlTrackFill, { height: `${brightnessLevel}%`, backgroundColor: '#d29922' }]} />
+                        </View>
+                        <Pressable
+                          style={({ pressed }) => [styles.controlBtn, pressed && styles.pressed]}
+                          onPress={() => adjustBrightness('down')}>
+                          <Ionicons name="remove" size={24} color="#f0f6fc" />
+                        </Pressable>
+                      </View>
+                      <Text style={styles.controlValue}>{brightnessLevel}%</Text>
                     </View>
                   </View>
 
@@ -1851,83 +1954,15 @@ export default function RemoteScreen() {
                     />
                   </View>
 
-                  {/* Volume Controls */}
-                  <View style={styles.volumeContainer}>
-                    <View style={styles.volumeSliderRow}>
-                      <Ionicons name="volume-low" size={24} color="#8b949e" />
-                      <View style={styles.sliderContainer}>
-                        <View style={styles.sliderTrack}>
-                          <View style={[styles.sliderFill, { width: `${volumeLevel}%` }]} />
-                        </View>
-                        <View style={styles.sliderButtons}>
-                          <Pressable
-                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                            onPress={() => adjustVolume('down')}>
-                            <Ionicons name="remove" size={24} color="#f0f6fc" />
-                          </Pressable>
-                          <Pressable
-                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                            onPress={() => adjustVolume('up')}>
-                            <Ionicons name="add" size={24} color="#f0f6fc" />
-                          </Pressable>
-                        </View>
-                      </View>
-                      <Ionicons name="volume-high" size={24} color="#8b949e" />
-                    </View>
-                    <Pressable
-                      style={({ pressed }) => [styles.muteButtonFull, pressed && styles.pressed]}
-                      onPress={toggleMute}>
-                      <Ionicons 
-                        name={isMuted ? "volume-mute" : "volume-high"} 
-                        size={24} 
-                        color="#ffffff" 
-                      />
-                      <Text style={styles.muteButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-                    </Pressable>
-                  </View>
-
-                  {/* Brightness Controls */}
-                  <View style={styles.brightnessContainer}>
-                    <View style={styles.brightnessSliderRow}>
-                      <Ionicons name="sunny-outline" size={24} color="#8b949e" />
-                      <View style={styles.sliderContainer}>
-                        <View style={styles.sliderTrack}>
-                          <View style={[styles.sliderFill, { width: `${brightnessLevel}%` }]} />
-                        </View>
-                        <View style={styles.sliderButtons}>
-                          <Pressable
-                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                            onPress={() => adjustBrightness('down')}>
-                            <Ionicons name="remove" size={24} color="#f0f6fc" />
-                          </Pressable>
-                          <Pressable
-                            style={({ pressed }) => [styles.sliderButton, pressed && styles.pressed]}
-                            onPress={() => adjustBrightness('up')}>
-                            <Ionicons name="add" size={24} color="#f0f6fc" />
-                          </Pressable>
-                        </View>
-                      </View>
-                      <Ionicons name="sunny" size={24} color="#8b949e" />
-                    </View>
-                    <View style={styles.brightnessPresetsRow}>
-                      {[25, 50, 75, 100].map((level) => (
-                        <Pressable
-                          key={level}
-                          style={({ pressed }) => [
-                            styles.brightnessPresetButton,
-                            brightnessLevel === level && styles.brightnessPresetButtonActive,
-                            pressed && styles.pressed
-                          ]}
-                          onPress={() => setBrightness(level)}>
-                          <Text style={[
-                            styles.brightnessPresetText,
-                            brightnessLevel === level && styles.brightnessPresetTextActive
-                          ]}>
-                            {level}%
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
+                  {/* Bottom Actions including Mute */}
+                  <View style={styles.actionButtonsRow}>
+                    <ControlButton
+                      icon={isMuted ? "volume-mute" : "volume-high"}
+                      label={isMuted ? 'Unmute' : 'Mute'}
+                      onPress={toggleMute}
+                      style={[styles.actionButtonSmall, styles.muteButton]}
+                      textStyle={styles.muteButtonText}
+                    />
                   </View>
                 </View>
               </ScrollView>
@@ -3512,7 +3547,7 @@ const styles = StyleSheet.create({
   },
   dpadContainer: {
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
   },
   dpadCircle: {
     width: 240,
@@ -3593,6 +3628,75 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.95 }],
     opacity: 0.9,
   },
+  controlMainLayout: {
+    flexDirection: 'row',
+    gap: 20,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  centerControlColumn: {
+    flex: 1,
+    gap: 16,
+  },
+  volumeContainer: {
+    alignItems: 'center',
+    gap: 8,
+    width: 80,
+  },
+  brightnessContainer: {
+    alignItems: 'center',
+    gap: 8,
+    width: 80,
+  },
+  controlCard: {
+    width: 80,
+    gap: 10,
+    alignItems: 'center',
+  },
+  controlHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'center',
+  },
+  controlLabel: {
+    color: '#8b949e',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  controlSliderVertical: {
+    height: 200,
+    alignItems: 'center',
+    gap: 8,
+  },
+  controlBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 10,
+    backgroundColor: '#21262d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  controlTrack: {
+    flex: 1,
+    width: 12,
+    borderRadius: 6,
+    backgroundColor: '#21262d',
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  controlTrackFill: {
+    width: '100%',
+    backgroundColor: '#238636',
+    borderRadius: 6,
+  },
+  controlValue: {
+    color: '#f0f6fc',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   buttonGroup: {
     gap: 10,
     marginBottom: 16,
@@ -3613,9 +3717,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     alignItems: 'center',
-  },
-  volumeContainer: {
-    gap: 12,
   },
   volumeSliderRow: {
     flexDirection: 'row',
@@ -3683,9 +3784,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
-  },
-  brightnessContainer: {
-    gap: 12,
   },
   brightnessSliderRow: {
     flexDirection: 'row',

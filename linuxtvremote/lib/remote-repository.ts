@@ -40,6 +40,8 @@ export type RepositoryState = {
   addAppsMessage?: string;
   kodiImage?: string;
   kodiImagePath?: string;
+  volumeLevel?: number;
+  brightnessLevel?: number;
 };
 
 export type PointerEventType = 'move' | 'tap' | 'click' | 'right_click';
@@ -587,6 +589,8 @@ export class RealServerRepository implements RemoteRepository {
         sink?: string;
         image?: string;
         path?: string;
+        volume?: number;
+        brightness?: number;
       };
 
       // Handle auth challenge from server
@@ -770,6 +774,24 @@ export class RealServerRepository implements RemoteRepository {
           this.emit({
             kodiImage: payload.image || '',
             kodiImagePath: payload.path || '',
+          });
+          return;
+        }
+
+        // Handle Volume level response
+        if (payload.type === 'volume_level' && payload.volume !== undefined) {
+          console.log('[Repository] Received volume level:', payload.volume);
+          this.emit({
+            volumeLevel: payload.volume as number,
+          });
+          return;
+        }
+
+        // Handle Brightness level response
+        if (payload.type === 'brightness_level' && payload.brightness !== undefined) {
+          console.log('[Repository] Received brightness level:', payload.brightness);
+          this.emit({
+            brightnessLevel: payload.brightness as number,
           });
           return;
         }
