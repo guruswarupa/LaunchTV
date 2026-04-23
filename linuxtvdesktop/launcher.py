@@ -1576,6 +1576,23 @@ class WebSocketControlServer(threading.Thread):
                         await websocket.send(
                             json.dumps({"status": "ok", "type": "pointer", "event": event_type})
                         )
+                    elif event_type == "scroll":
+                        try:
+                            dx = int(round(float(payload.get("dx", 0))))
+                            dy = int(round(float(payload.get("dy", 0))))
+                        except (TypeError, ValueError):
+                            dx = 0
+                            dy = 0
+
+                        if dx or dy:
+                            self.window.queue_remote_event(
+                                {"type": "pointer", "event": "scroll", "dx": dx, "dy": dy}
+                            )
+                            await websocket.send(
+                                json.dumps({"status": "ok", "type": "pointer", "event": "scroll"})
+                            )
+                        else:
+                            await websocket.send(json.dumps({"status": "error", "error": "invalid scroll"}))
                     else:
                         await websocket.send(json.dumps({"status": "error", "error": "invalid pointer event"}))
                     continue
@@ -6345,6 +6362,22 @@ class LauncherWindow(QMainWindow):
             if event_type == "right_click":
                 subprocess.run([xdotool, "click", "3"], check=False)
                 return
+            
+            if event_type == "scroll":
+                dx = int(round(float(event.get("dx", 0))))
+                dy = int(round(float(event.get("dy", 0))))
+                # Use xdotool to simulate mouse wheel
+                # Positive dy = scroll up (button 4), Negative dy = scroll down (button 5)
+                # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
+                if dy > 0:
+                    subprocess.run([xdotool, "click", "4"], check=False)
+                elif dy < 0:
+                    subprocess.run([xdotool, "click", "5"], check=False)
+                if dx > 0:
+                    subprocess.run([xdotool, "click", "6"], check=False)
+                elif dx < 0:
+                    subprocess.run([xdotool, "click", "7"], check=False)
+                return
         
         # If an app is running, use the existing logic
         allow_cached = event_type == "move"
@@ -6372,6 +6405,24 @@ class LauncherWindow(QMainWindow):
         if event_type == "right_click":
             self.focus_remote_target_window(xdotool, target_window)
             subprocess.run([xdotool, "click", "3"], check=False)
+            return
+
+        if event_type == "scroll":
+            dx = int(round(float(event.get("dx", 0))))
+            dy = int(round(float(event.get("dy", 0))))
+            # Focus the target window first
+            self.focus_remote_target_window(xdotool, target_window)
+            # Use xdotool to simulate mouse wheel
+            # Positive dy = scroll up (button 4), Negative dy = scroll down (button 5)
+            # Positive dx = scroll left (button 6), Negative dx = scroll right (button 7)
+            if dy > 0:
+                subprocess.run([xdotool, "click", "4"], check=False)
+            elif dy < 0:
+                subprocess.run([xdotool, "click", "5"], check=False)
+            if dx > 0:
+                subprocess.run([xdotool, "click", "6"], check=False)
+            elif dx < 0:
+                subprocess.run([xdotool, "click", "7"], check=False)
             return
 
     def close_active_app(self):
