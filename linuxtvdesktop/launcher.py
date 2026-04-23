@@ -6450,12 +6450,40 @@ class LauncherWindow(QMainWindow):
             
             logging.info("Toggling fullscreen for active window %s", active_window)
             try:
-                # Send F11 key to toggle fullscreen (standard for most apps)
-                subprocess.run([xdotool, "key", "F11"], check=False, timeout=3)
+                # Check if the active window is a browser
+                is_browser = self._is_browser_window(xdotool, active_window)
+                
+                if is_browser:
+                    # Browsers use 'f' key for fullscreen toggle
+                    logging.info("Browser detected, sending 'f' key for fullscreen toggle")
+                    subprocess.run([xdotool, "key", "f"], check=False, timeout=3)
+                else:
+                    # Send F11 key to toggle fullscreen (standard for most apps)
+                    subprocess.run([xdotool, "key", "F11"], check=False, timeout=3)
             except Exception as e:
                 logging.exception("Failed to toggle fullscreen: %s", e)
         else:
             logging.warning("No active window found for fullscreen toggle")
+    
+    def _is_browser_window(self, xdotool, window_id):
+        """Check if the active window is a browser."""
+        try:
+            # Get window class/name to detect browser
+            window_class = subprocess.run(
+                [xdotool, "getwindowclassname", window_id],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=2
+            ).stdout.strip().lower()
+            
+            # Check if it's a browser window
+            is_browser = any(browser in window_class for browser in ['brave', 'chrome', 'chromium', 'firefox'])
+            
+            return is_browser
+        except Exception as e:
+            logging.debug("Failed to detect browser window: %s", e)
+            return False
 
     def check_active_process(self):
         if not self.active_process:
