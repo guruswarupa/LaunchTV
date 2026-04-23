@@ -219,7 +219,7 @@ export default function RemoteScreen() {
   const [availableApps, setAvailableApps] = useState<Array<{id: string; name: string; icon?: string; kind?: string; category?: string}>>([]);
   const [addAppsLoading, setAddAppsLoading] = useState(false);
   const [addAppsMessage, setAddAppsMessage] = useState('');
-  const [addAppMode, setAddAppMode] = useState<'custom' | 'recommended' | null>(null);
+  const [addAppMode, setAddAppMode] = useState<'custom' | null>(null);
   const [selectedWifiNetwork, setSelectedWifiNetwork] = useState<{ssid: string; security: string} | null>(null);
   const repositoryRef = useRef<RemoteRepository | null>(null);
   const repeatTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -664,16 +664,10 @@ export default function RemoteScreen() {
     repositoryRef.current?.sendSettingsRequest('get_kodi_image', { path: imagePath });
   };
 
-  const showCustomApp = () => {
+  const showAddApp = () => {
     setAddAppMode('custom');
     setIsAddAppVisible(true);
     setAvailableApps([]);
-  };
-
-  const showRecommendedApps = () => {
-    setAddAppMode('recommended');
-    setIsAddAppVisible(false);
-    fetchAvailableApps();
   };
 
   const setSoundDevice = (sink: string) => {
@@ -724,12 +718,26 @@ export default function RemoteScreen() {
   };
 
   const fetchKodiGroups = async (systemOverride?: SavedSystem | null) => {
+    const kodiSystem = systemOverride ?? activeSystem;
+    
+    // Validate that we have a system to connect to
+    if (!kodiSystem) {
+      console.warn('No system selected for Kodi fetch');
+      setKodiError('Please select or add a system first');
+      return;
+    }
+
     setIsKodiLoading(true);
     setKodiError(null);
 
     try {
-      const kodiSystem = systemOverride ?? activeSystem;
       const kodiUrl = getKodiUrl(kodiSystem);
+      console.log('Fetching Kodi groups from:', kodiUrl);
+      
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
       const response = await fetch(kodiUrl, {
         method: 'POST',
         headers: getKodiRequestHeaders(kodiSystem),
@@ -739,7 +747,10 @@ export default function RemoteScreen() {
           params: { channeltype: 'tv' },
           id: 1,
         }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
       if (response.status === 401) {
         openKodiAuthModal();
@@ -747,10 +758,37 @@ export default function RemoteScreen() {
       }
 
       if (!response.ok) {
-        throw new Error('Failed to connect to Kodi');
+        throw new Error(`Failed to connect to Kodi (HTTP ${response.status})`);
       }
 
       const data = await response.json();
+      
+      if (data?.error) {
+        // JSON-RPC errors are expected when PVR is not configured - treat as normal state
+        console.warn('Kodi JSON-RPC error:', data.error);
+        
+        // Check if this is a PVR-related error (PVR not configured/enabled)
+        const errorCode = data.error.code;
+        const errorMessage = data.error.message || '';
+        const isPvrError = 
+          errorMessage.toLowerCase().includes('pvr') ||
+          errorMessage.toLowerCase().includes('not enabled') ||
+          errorMessage.toLowerCase().includes('not configured') ||
+          errorCode === -32601 || // Method not found
+          errorCode === -32603;   // Internal error
+        
+        if (isPvrError) {
+          setKodiError('Live TV/PVR is not configured in Kodi. Please set up PVR in Kodi settings first.');
+        } else {
+          setKodiError(errorMessage || 'Kodi returned an error');
+        }
+        
+        setKodiGroups([]);
+        setKodiChannels([]);
+        setSelectedKodiGroup(null);
+        return;
+      }
+      
       const groups = (data?.result?.channelgroups || []) as KodiChannelGroup[];
       setSelectedKodiGroup(null);
       setKodiChannels([]);
@@ -760,11 +798,28 @@ export default function RemoteScreen() {
         setKodiError('No channel folders found. Make sure PVR channel groups are available in Kodi.');
       }
     } catch (error) {
-      console.error('Error fetching Kodi groups:', error);
-      const message =
-        error instanceof Error && error.message === 'Kodi authentication failed'
-          ? 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.'
-          : 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      // Network failures are expected when Kodi is not running - treat as normal state
+      const isNetworkError = 
+        error instanceof Error && 
+        (error.message.includes('Network request failed') || 
+         error.name === 'AbortError' ||
+         error.message.includes('timeout'));
+      
+      if (isNetworkError) {
+        console.warn('Kodi is not reachable:', error.message);
+      } else {
+        console.error('Error fetching Kodi groups:', error);
+      }
+      
+      let message: string;
+      if (error instanceof Error && error.message === 'Kodi authentication failed') {
+        message = 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.';
+      } else if (isNetworkError) {
+        message = 'Kodi is not running or not reachable. Start Kodi and ensure the web server is enabled.';
+      } else {
+        message = 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      }
+      
       setKodiError(message);
       setKodiGroups([]);
       setKodiChannels([]);
@@ -778,15 +833,26 @@ export default function RemoteScreen() {
     systemOverride?: SavedSystem | null,
     groupOverride?: KodiChannelGroup | null
   ) => {
+    const kodiSystem = systemOverride ?? activeSystem;
+    const kodiGroup = groupOverride ?? selectedKodiGroup;
+    
+    // Validate that we have a system to connect to
+    if (!kodiSystem) {
+      console.warn('No system selected for Kodi channel fetch');
+      setKodiError('Please select or add a system first');
+      return;
+    }
+
     setIsKodiLoading(true);
     setKodiError(null);
     
     try {
-      const kodiSystem = systemOverride ?? activeSystem;
-      const kodiGroup = groupOverride ?? selectedKodiGroup;
       const kodiUrl = getKodiUrl(kodiSystem);
-      const kodiHost = kodiSystem?.ipAddress || 'localhost';
-      const kodiPort = kodiSystem?.kodiPort?.trim() || DEFAULT_KODI_PORT;
+      console.log('Fetching Kodi channels from:', kodiUrl, 'group:', kodiGroup?.label || 'alltv');
+      
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
       const payload = {
         jsonrpc: '2.0',
@@ -802,7 +868,10 @@ export default function RemoteScreen() {
         method: 'POST',
         headers: getKodiRequestHeaders(kodiSystem),
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
       
       if (response.status === 401) {
         openKodiAuthModal();
@@ -810,10 +879,35 @@ export default function RemoteScreen() {
       }
 
       if (!response.ok) {
-        throw new Error('Failed to connect to Kodi');
+        throw new Error(`Failed to connect to Kodi (HTTP ${response.status})`);
       }
       
       const data = await response.json();
+      
+      if (data?.error) {
+        // JSON-RPC errors are expected when PVR is not configured - treat as normal state
+        console.warn('Kodi JSON-RPC error:', data.error);
+        
+        // Check if this is a PVR-related error (PVR not configured/enabled)
+        const errorCode = data.error.code;
+        const errorMessage = data.error.message || '';
+        const isPvrError = 
+          errorMessage.toLowerCase().includes('pvr') ||
+          errorMessage.toLowerCase().includes('not enabled') ||
+          errorMessage.toLowerCase().includes('not configured') ||
+          errorCode === -32601 || // Method not found
+          errorCode === -32603;   // Internal error
+        
+        if (isPvrError) {
+          setKodiError('Live TV/PVR is not configured in Kodi. Please set up PVR in Kodi settings first.');
+        } else {
+          setKodiError(errorMessage || 'Kodi returned an error');
+        }
+        
+        setKodiChannels([]);
+        return;
+      }
+      
       const channels = (data?.result?.channels || []) as KodiChannel[];
       setKodiChannels(channels);
       
@@ -825,11 +919,28 @@ export default function RemoteScreen() {
         );
       }
     } catch (error) {
-      console.error('Error fetching Kodi channels:', error);
-      const message =
-        error instanceof Error && error.message === 'Kodi authentication failed'
-          ? 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.'
-          : 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      // Network failures are expected when Kodi is not running - treat as normal state
+      const isNetworkError = 
+        error instanceof Error && 
+        (error.message.includes('Network request failed') || 
+         error.name === 'AbortError' ||
+         error.message.includes('timeout'));
+      
+      if (isNetworkError) {
+        console.warn('Kodi is not reachable:', error.message);
+      } else {
+        console.error('Error fetching Kodi channels:', error);
+      }
+      
+      let message: string;
+      if (error instanceof Error && error.message === 'Kodi authentication failed') {
+        message = 'Kodi rejected the username or password. Update the Kodi credentials in the system settings.';
+      } else if (isNetworkError) {
+        message = 'Kodi is not running or not reachable. Start Kodi and ensure the web server is enabled.';
+      } else {
+        message = 'Could not connect to Kodi. Make sure Kodi is running, the web server is enabled, and the Kodi username/password are correct.';
+      }
+      
       setKodiError(message);
       setKodiChannels([]);
     } finally {
@@ -838,8 +949,17 @@ export default function RemoteScreen() {
   };
 
   const playKodiChannel = async (channelId: number, channelName: string) => {
+    if (!activeSystem) {
+      Alert.alert('Error', 'Please select a system first');
+      return;
+    }
+
     try {
       const kodiUrl = getKodiUrl(activeSystem);
+      
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
       const payload = {
         jsonrpc: "2.0",
@@ -854,7 +974,10 @@ export default function RemoteScreen() {
         method: 'POST',
         headers: getKodiRequestHeaders(activeSystem),
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (response.status === 401) {
         openKodiAuthModal();
@@ -865,16 +988,28 @@ export default function RemoteScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         console.log(`Playing channel: ${channelName}`);
       } else {
-        Alert.alert('Error', 'Failed to play channel');
+        Alert.alert('Error', `Failed to play channel (HTTP ${response.status})`);
       }
     } catch (error) {
       console.error('Error playing channel:', error);
-      Alert.alert(
-        'Error',
-        error instanceof Error && error.message === 'Kodi authentication failed'
-          ? 'Kodi rejected the username or password for this system.'
-          : 'Could not connect to Kodi'
-      );
+      
+      // Network failures are expected when Kodi is not running
+      const isNetworkError = 
+        error instanceof Error && 
+        (error.message.includes('Network request failed') || 
+         error.name === 'AbortError' ||
+         error.message.includes('timeout'));
+      
+      let message: string;
+      if (error instanceof Error && error.message === 'Kodi authentication failed') {
+        message = 'Kodi rejected the username or password for this system.';
+      } else if (isNetworkError) {
+        message = 'Kodi is not running or not reachable.';
+      } else {
+        message = 'Could not connect to Kodi';
+      }
+      
+      Alert.alert('Error', message);
     }
   };
 
@@ -1017,8 +1152,27 @@ export default function RemoteScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT' | 'SLEEP') => {
+  const confirmPowerAction = (action: 'SHUTDOWN' | 'REBOOT' | 'SLEEP' | 'UPDATE') => {
     setIsMenuVisible(false);
+    
+    if (action === 'UPDATE') {
+      // Handle update separately with its own confirmation
+      if (repositoryState.isDemoMode) {
+        sendAction('UPDATE');
+        return;
+      }
+
+      Alert.alert('Update System', 'Start system update? This will run apt update && apt upgrade and may take several minutes.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Update',
+          style: 'default',
+          onPress: () => sendAction('UPDATE'),
+        },
+      ]);
+      return;
+    }
+    
     const actionLabel = action === 'SHUTDOWN' ? 'Shutdown' : action === 'REBOOT' ? 'Reboot' : 'Sleep';
 
     if (repositoryState.isDemoMode) {
@@ -1787,58 +1941,23 @@ export default function RemoteScreen() {
                 <View style={styles.appsContainer}>
                   <View style={styles.appsHeader}>
                     <Text style={styles.appsTitle}>Apps</Text>
-                    <Pressable
-                      style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
-                      onPress={fetchApps}>
-                      <Ionicons name="refresh" size={20} color="#58a6ff" />
-                    </Pressable>
+                    <View style={styles.appsHeaderButtons}>
+                      <Pressable
+                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                        onPress={fetchApps}>
+                        <Ionicons name="refresh" size={20} color="#58a6ff" />
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [styles.refreshButton, pressed && styles.pressed]}
+                        onPress={showAddApp}>
+                        <Ionicons name="add" size={20} color="#58a6ff" />
+                      </Pressable>
+                    </View>
                   </View>
                   <Text style={styles.appsSubtitle}>Tap an app to launch it on LinuxTV</Text>
                   
-                  {/* Add App Card */}
-                  <View style={styles.addAppCard}>
-                    <Text style={styles.addAppCardTitle}>Add New App</Text>
-                    <View style={styles.addAppChoiceButtons}>
-                      <Pressable
-                        style={[
-                          styles.addAppChoiceButton,
-                          addAppMode === 'custom' && styles.addAppChoiceButtonActive,
-                        ]}
-                        onPress={showCustomApp}>
-                        <Ionicons 
-                          name="create-outline" 
-                          size={20} 
-                          color={addAppMode === 'custom' ? '#58a6ff' : '#8b949e'} 
-                        />
-                        <Text style={[
-                          styles.addAppChoiceButtonText,
-                          addAppMode === 'custom' && styles.addAppChoiceButtonTextActive,
-                        ]}>
-                          Custom
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        style={[
-                          styles.addAppChoiceButton,
-                          addAppMode === 'recommended' && styles.addAppChoiceButtonActive,
-                        ]}
-                        onPress={showRecommendedApps}>
-                        <Ionicons 
-                          name="star-outline" 
-                          size={20} 
-                          color={addAppMode === 'recommended' ? '#58a6ff' : '#8b949e'} 
-                        />
-                        <Text style={[
-                          styles.addAppChoiceButtonText,
-                          addAppMode === 'recommended' && styles.addAppChoiceButtonTextActive,
-                        ]}>
-                          Recommended
-                        </Text>
-                      </Pressable>
-                    </View>
-                    
-                    {/* Custom App Form */}
-                    {isAddAppVisible && addAppMode === 'custom' && (
+                  {/* Add App Form */}
+                  {isAddAppVisible && addAppMode === 'custom' && (
                       <View style={styles.addAppForm}>
                         <TextInput
                           style={styles.appInput}
@@ -1901,140 +2020,6 @@ export default function RemoteScreen() {
                         </View>
                       </View>
                     )}
-                    
-                    {/* Recommended Apps */}
-                    {addAppMode === 'recommended' && (
-                      <View style={styles.recommendedAppsContainer}>
-                        {addAppsLoading ? (
-                          <View style={styles.settingsLoading}>
-                            <Ionicons name="sync" size={32} color="#58a6ff" />
-                            <Text style={styles.settingsLoadingText}>Loading apps...</Text>
-                          </View>
-                        ) : (
-                          <>
-                            {/* Available to Add */}
-                            {availableApps.filter(app => !serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
-                              <>
-                                <Text style={styles.recommendedSectionTitle}>Available to Add</Text>
-                                {availableApps
-                                  .filter(app => !serverApps.some(serverApp => serverApp.id === app.id))
-                                  .map((app) => (
-                                    <Pressable
-                                      key={app.id}
-                                      style={styles.appItem}
-                                      onPress={() => addAppToSystem(app.id, app.name, app.kind || 'native')}>
-                                      <View style={styles.appItemLeft}>
-                                        {app.icon ? (
-                                          <RNImage 
-                                            source={{ uri: app.icon }} 
-                                            style={styles.appItemIcon}
-                                            resizeMode="contain"
-                                          />
-                                        ) : (
-                                          <Ionicons 
-                                            name={app.kind === 'web' ? 'globe-outline' : 'desktop-outline'} 
-                                            size={20} 
-                                            color="#58a6ff" 
-                                          />
-                                        )}
-                                        <View style={styles.appItemText}>
-                                          <Text style={styles.appName}>{app.name}</Text>
-                                          <Text style={styles.appCategory}>{app.category || (app.kind === 'web' ? 'Web App' : 'Native App')}</Text>
-                                        </View>
-                                      </View>
-                                      <Ionicons name="add-circle-outline" size={20} color="#3fb950" />
-                                    </Pressable>
-                                  ))}
-                              </>
-                            )}
-                            
-                            {/* Already Added */}
-                            {availableApps.filter(app => serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
-                              <>
-                                <Text style={styles.recommendedSectionTitle}>Already Added</Text>
-                                {availableApps
-                                  .filter(app => serverApps.some(serverApp => serverApp.id === app.id))
-                                  .map((app) => (
-                                    <Pressable
-                                      key={`added-${app.id}`}
-                                      style={[styles.appItem, styles.appItemAdded]}>
-                                      <View style={styles.appItemLeft}>
-                                        {app.icon ? (
-                                          <RNImage 
-                                            source={{ uri: app.icon }} 
-                                            style={styles.appItemIcon}
-                                            resizeMode="contain"
-                                          />
-                                        ) : (
-                                          <Ionicons 
-                                            name={app.kind === 'web' ? 'globe-outline' : 'desktop-outline'} 
-                                            size={20} 
-                                            color="#3fb950" 
-                                          />
-                                        )}
-                                        <View style={styles.appItemText}>
-                                          <Text style={styles.appName}>{app.name}</Text>
-                                          <Text style={styles.appCategory}>{app.category || (app.kind === 'web' ? 'Web App' : 'Native App')}</Text>
-                                        </View>
-                                      </View>
-                                      <Pressable
-                                        style={styles.appRemoveButton}
-                                        onPress={() => {
-                                          Alert.alert(
-                                            'Remove App',
-                                            `Remove ${app.name} from launcher?`,
-                                            [
-                                              { text: 'Cancel', style: 'cancel' },
-                                              { 
-                                                text: 'Remove', 
-                                                style: 'destructive',
-                                                onPress: () => {
-                                                  setAddAppsLoading(true);
-                                                  setAddAppsMessage(`Removing ${app.name}...`);
-                                                  sendSettingsRequest('remove_app', { id: app.id });
-                                                }
-                                              },
-                                            ]
-                                          );
-                                        }}>
-                                        <Ionicons name="trash-outline" size={18} color="#f85149" />
-                                      </Pressable>
-                                    </Pressable>
-                                  ))}
-                              </>
-                            )}
-                            
-                            {availableApps.length === 0 && !addAppsLoading && (
-                              <View style={styles.settingsEmpty}>
-                                <Ionicons name="grid-outline" size={48} color="#8b949e" />
-                                <Text style={styles.settingsEmptyText}>No apps found</Text>
-                              </View>
-                            )}
-                            
-                            {availableApps.filter(app => !serverApps.some(serverApp => serverApp.id === app.id)).length === 0 && 
-                             availableApps.filter(app => serverApps.some(serverApp => serverApp.id === app.id)).length > 0 && (
-                              <View style={styles.settingsEmpty}>
-                                <Ionicons name="checkmark-circle-outline" size={48} color="#3fb950" />
-                                <Text style={styles.settingsEmptyText}>All apps are already added</Text>
-                              </View>
-                            )}
-                            
-                            {addAppsMessage ? (
-                              <View style={[
-                                styles.settingsMessage,
-                                addAppsMessage.includes('added') && styles.settingsMessageSuccess,
-                                addAppsMessage.includes('already') && styles.settingsMessageSuccess,
-                                addAppsMessage.includes('removed') && styles.settingsMessageSuccess,
-                                (addAppsMessage.includes('Could not') || addAppsMessage.includes('Error')) && styles.settingsMessageError,
-                              ]}>
-                                <Text style={styles.settingsMessageText}>{addAppsMessage}</Text>
-                              </View>
-                            ) : null}
-                          </>
-                        )}
-                      </View>
-                    )}
-                  </View>
                   
                   <View style={styles.appsGrid}>
                     {/* Native Apps Section */}
@@ -2608,6 +2593,16 @@ export default function RemoteScreen() {
             
             <View style={styles.menuDivider} />
 
+            {/* System Actions */}
+            <Pressable
+              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+              onPress={() => confirmPowerAction('UPDATE')}>
+              <View style={styles.menuItemContent}>
+                <Ionicons name="download" size={20} color="#58a6ff" />
+                <Text style={styles.menuItemText}>Update System</Text>
+              </View>
+            </Pressable>
+            
             {/* Power Actions */}
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}

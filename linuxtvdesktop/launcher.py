@@ -1163,6 +1163,51 @@ def request_system_power_action(action: str):
         return False
 
 
+def request_system_update():
+    """Trigger system update using apt, auto-password only for linuxtv user"""
+    # Check if apt is available
+    apt = shutil.which("apt")
+    if not apt:
+        logging.warning("apt is not available on this system")
+        return False, "apt is not available on this system"
+    
+    try:
+        # Use a terminal emulator if available
+        terminal_emulators = ["gnome-terminal", "x-terminal-emulator", "xterm", "konsole"]
+        terminal = None
+        for term in terminal_emulators:
+            if shutil.which(term):
+                terminal = term
+                break
+        
+        # Check current username - only auto-password for linuxtv user
+        current_user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+        
+        if current_user == "linuxtv":
+            # Auto-fill password for linuxtv user
+            update_command = "echo 'linuxtv' | sudo -S apt update && echo 'linuxtv' | sudo -S apt upgrade -y"
+        else:
+            # Let user enter password manually
+            update_command = "sudo apt update && sudo apt upgrade -y"
+        
+        if terminal:
+            # Run in terminal so user can see progress
+            if terminal == "gnome-terminal":
+                subprocess.Popen([terminal, "--", "bash", "-c", f"{update_command}; echo 'Update complete. Press Enter to close.'; read"])
+            else:
+                subprocess.Popen([terminal, "-e", f"bash -c '{update_command}; echo Update complete. Press Enter to close.; read'"])
+            logging.info("Triggered system update in terminal (user: %s)", current_user)
+            return True, "System update started in terminal"
+        else:
+            # No terminal available, run silently
+            subprocess.Popen(["bash", "-c", update_command])
+            logging.info("Triggered system update (no terminal available, user: %s)", current_user)
+            return True, "System update started (check terminal for progress)"
+    except Exception as e:
+        logging.exception("Failed to trigger system update")
+        return False, f"Failed to start update: {e}"
+
+
 class InputDeviceGrabber(threading.Thread):
     """Captures input events from remote control devices system-wide using evdev."""
     
@@ -3597,6 +3642,18 @@ class LauncherWindow(QMainWindow):
             logging.error(f"Failed to restart: {e}")
             QMessageBox.critical(self, "Error", f"Failed to restart: {e}")
 
+    def update_system(self):
+        """Update the system"""
+        try:
+            success, message = request_system_update()
+            if success:
+                QMessageBox.information(self, "System Update", message)
+            else:
+                QMessageBox.critical(self, "Error", message)
+        except Exception as e:
+            logging.error(f"Failed to update: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to update: {e}")
+
     def setup_ui(self):
         self.ui_metrics = self.compute_ui_metrics()
         central = QWidget()
@@ -3749,6 +3806,20 @@ class LauncherWindow(QMainWindow):
         restart_button.clicked.connect(self.restart_system)
         hero_top_row.addWidget(restart_button)
 
+        # Update button
+        update_button = QToolButton()
+        update_button.setObjectName("updateButton")
+        update_icon_path = resource_path("icons/update.png")
+        if update_icon_path.exists():
+            white_icon = create_white_icon(str(update_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            update_button.setIcon(white_icon)
+            update_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
+        update_button.setToolTip("Update System")
+        update_button.setCursor(Qt.PointingHandCursor)
+        update_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        update_button.clicked.connect(self.update_system)
+        hero_top_row.addWidget(update_button)
+
         settings_button = QToolButton()
         settings_button.setObjectName("settingsButton")
         settings_icon_path = resource_path("icons/settings.png")
@@ -3882,6 +3953,22 @@ class LauncherWindow(QMainWindow):
             }
             QToolButton#restartButton:pressed {
                 background: rgba(210, 153, 34, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#updateButton {
+                background: transparent;
+                color: #58a6ff;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#updateButton:hover {
+                background: rgba(88, 166, 255, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #79b8ff;
+            }
+            QToolButton#updateButton:pressed {
+                background: rgba(88, 166, 255, 0.25);
                 border-radius: __SETTINGS_RADIUS__px;
             }
             QToolButton#networkButton {
@@ -5943,6 +6030,10 @@ class LauncherWindow(QMainWindow):
 
         if action in ("SHUTDOWN", "REBOOT"):
             request_system_power_action(action)
+            return
+
+        if action == "UPDATE":
+            request_system_update()
             return
 
         if action in ("VOLUME_UP", "VOLUME_DOWN", "MUTE"):
