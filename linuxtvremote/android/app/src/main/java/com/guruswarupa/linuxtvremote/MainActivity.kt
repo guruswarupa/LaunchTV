@@ -3,9 +3,14 @@ import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
+import com.facebook.react.bridge.ReactContext
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 
@@ -61,5 +66,27 @@ class MainActivity : ReactActivity() {
       // Use the default back button implementation on Android S
       // because it's doing more than [Activity.moveTaskToBack] in fact.
       super.invokeDefaultOnBackPressed()
+  }
+
+  /**
+   * Intercept volume button presses and send them to React Native
+   */
+  override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+    if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+      sendVolumeEventToJS(if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) "up" else "down")
+      return true // Consume the event
+    }
+    return super.onKeyDown(keyCode, event)
+  }
+
+  private fun sendVolumeEventToJS(direction: String) {
+    val reactContext = reactInstanceManager?.currentReactContext
+    if (reactContext != null) {
+      val params: WritableMap = Arguments.createMap()
+      params.putString("direction", direction)
+      reactContext
+        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("volumeButtonPressed", params)
+    }
   }
 }

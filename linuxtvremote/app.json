@@ -22,7 +22,11 @@
       "edgeToEdgeEnabled": true,
       "usesCleartextTraffic": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.guruswarupa.linuxtvremote"
+      "package": "com.guruswarupa.linuxtvremote",
+      "permissions": [
+        "WAKE_LOCK",
+        "FOREGROUND_SERVICE"
+      ]
     },
     "web": {
       "output": "static",

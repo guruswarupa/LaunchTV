@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { DeviceEventEmitter, EmitterSubscription } from 'react-native';
 import {
   Alert,
   AppState,
@@ -1509,6 +1511,60 @@ export default function RemoteScreen() {
       setBrightnessLevel(repositoryState.brightnessLevel);
     }
   }, [repositoryState.brightnessLevel]);
+
+  // Keep app awake when connected to maintain WebSocket connection
+  useEffect(() => {
+    let isActive = true;
+
+    const manageKeepAwake = async () => {
+      if (repositoryState.status === 'Connected' && isActive) {
+        try {
+          await activateKeepAwakeAsync('websocket-connection');
+        } catch (error) {
+          console.error('Failed to activate keep awake:', error);
+        }
+      } else if (repositoryState.status !== 'Connected') {
+        try {
+          deactivateKeepAwake('websocket-connection');
+        } catch (error) {
+          console.error('Failed to deactivate keep awake:', error);
+        }
+      }
+    };
+
+    manageKeepAwake();
+
+    return () => {
+      isActive = false;
+      // Cleanup: deactivate when component unmounts
+      deactivateKeepAwake('websocket-connection');
+    };
+  }, [repositoryState.status]);
+
+  // Listen to hardware volume button events from Android native code
+  useEffect(() => {
+    // Only intercept volume buttons when connected and not on keyboard tab
+    if (repositoryState.status !== 'Connected' || repositoryState.isDemoMode) {
+      return;
+    }
+
+    const subscription = DeviceEventEmitter.addListener(
+      'volumeButtonPressed',
+      (params: { direction: string }) => {
+        // Send volume command to desktop
+        if (params.direction === 'up') {
+          sendAction('VOLUME_UP');
+        } else if (params.direction === 'down') {
+          sendAction('VOLUME_DOWN');
+        }
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    );
+
+    return () => {
+      subscription.remove();
+    };
+  }, [repositoryState.status, repositoryState.isDemoMode, activeTab]);
 
   const showLoginScreen = !hasSavedSetup;
   const normalizedKodiSearchQuery = kodiSearchQuery.trim().toLowerCase();
