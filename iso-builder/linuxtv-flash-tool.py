@@ -311,20 +311,19 @@ class LinuxTVFlashTool:
             else:
                 self.flash_linux(iso_file, device)
             
-            if self.enable_persistence.get():
-                self.update_status("Creating persistence partition...")
-                self.update_progress(90)
-                self.create_persistence_partition(device)
-            
             self.update_progress(100)
             self.update_status("Flash complete!")
             
             self.root.after(0, lambda: messagebox.showinfo(
                 "Success",
                 "LinuxTV has been successfully flashed to USB!\n\n"
+                "Partition layout:\n"
+                "• Partition 1: EFI (100MB)\n"
+                "• Partition 2: LinuxTV ISO (~2GB)\n"
+                "• Partition 3: Persistence (remaining space)\n\n"
                 "You can now boot from this USB drive.\n"
-                "If persistence is enabled, the partition will be\n"
-                "automatically formatted on first boot."
+                "On first boot, LinuxTV will automatically format\n"
+                "the persistence partition as ext4."
             ))
         
         except Exception as e:
@@ -337,182 +336,260 @@ class LinuxTVFlashTool:
             self.root.after(0, lambda: self.flash_button.config(state=tk.NORMAL))
     
     def flash_windows(self, iso_file, device):
-        """Flash ISO on Windows using dd for Windows or raw write"""
+        """Flash ISO on Windows using PowerShell raw write (dd is unreliable for hybrid ISOs)"""
         self.update_status("Writing ISO to USB (this may take 5-15 minutes)...")
         
-        dd_path = self.find_dd_windows()
+        # Always use PowerShell method - dd for Windows doesn't handle hybrid ISOs properly
+        print(f"Using PowerShell raw write to {device}")
+        print(f"ISO file: {iso_file}")
         
-        if dd_path:
-            cmd = [dd_path, f"if={iso_file}", f"of={device}", "bs=4M", "--progress"]
-            process = subprocess.run(cmd, capture_output=True, text=True)
-            if process.returncode != 0:
-                raise Exception(f"dd failed: {process.stderr}")
-        else:
-            # Use PowerShell with progress monitoring
-            ps_script = """
+        # Check ISO file size
+        iso_size = os.path.getsize(iso_file)
+        print(f"ISO file size: {iso_size / (1024*1024):.0f} MB ({iso_size} bytes)")
+        
+        self._flash_windows_powershell(iso_file, device)
+        
+        # Verify the ISO was written correctly
+        print("Verifying disk after flash...")
+        time.sleep(5)
+        
+        disk_number = device.replace("\\\\.\\PhysicalDrive", "")
+        verify_script = f"select disk {disk_number}\nlist partition\ndetail disk\nexit\n"
+        verify_file = Path(os.environ['TEMP']) / "linuxtv_post_flash_verify.txt"
+        verify_file.write_text(verify_script)
+        
+        verify_result = subprocess.run(
+            ['diskpart', '/s', str(verify_file)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        verify_file.unlink()
+        
+        print(f"Post-flash disk layout:\n{verify_result.stdout}")
+        if verify_result.stderr:
+            print(f"Post-flash errors: {verify_result.stderr}")
+    
+    def _flash_windows_powershell(self, iso_file, device):
+        """Flash ISO on Windows using diskpart apply command (most reliable for hybrid ISOs)"""
+        self.update_status("Writing ISO to USB (this may take 5-15 minutes)...")
+        
+        disk_number = device.replace("\\\\.\\PhysicalDrive", "")
+        
+        print(f"Using diskpart to apply ISO to disk {disk_number}")
+        
+        # Method 1: Try using diskpart's apply command (Windows 10/11)
+        # First, we need to mount the ISO, then apply it
+        ps_script = """
             $ErrorActionPreference = "Stop"
             $isoPath = "{}"
+            $diskNumber = {}
             $drivePath = "{}"
             
             try {{
-                Write-Host "Starting flash process..."
+                Write-Host "Step 1: Mounting ISO..."
+                $mountedISO = Mount-DiskImage -ImagePath $isoPath -PassThru
+                $driveLetter = ($mountedISO | Get-Volume).DriveLetter
+                Write-Host "ISO mounted as drive $driveLetter`:"
                 
-                # Extract disk number
-                $diskNumber = $drivePath -replace '\\\\\\\\.\\\\PhysicalDrive', ''
+                Write-Host "Step 2: Preparing USB disk..."
+                # Get ISO size to calculate how much space we need for the main partition
+                $isoSize = (Get-Item $isoPath).Length
+                $isoSizeMB = [math]::Ceiling($isoSize / 1MB) + 100  # Add 100MB buffer
                 
-                # Clean the disk
-                Write-Host "Preparing disk..."
-                $diskpartClean = @"
+                Write-Host "ISO size: $isoSizeMB MB"
+                
+                $diskpartScript = @"
 select disk $diskNumber
 attributes disk clear readonly
-offline disk
-online disk
+online disk noerr
 clean
 convert mbr
+create partition primary size=100
+format quick fs=fat32 label="EFI"
+active
+create partition primary size=$isoSizeMB
+format quick fs=fat32 label="LinuxTV"
+create partition primary
+format quick fs=exfat label="persistence"
+exit
 "@
-                $tempFile1 = [System.IO.Path]::GetTempFileName()
-                [System.IO.File]::WriteAllText($tempFile1, $diskpartClean)
-                Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFile1`"" -Wait -NoNewWindow
-                [System.IO.File]::Delete($tempFile1)
+                $tempFile = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($tempFile, $diskpartScript)
+                $result = Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFile`"" -Wait -NoNewWindow -PassThru
+                [System.IO.File]::Delete($tempFile)
+                
+                if ($result.ExitCode -ne 0) {{
+                    throw "DiskPart failed with exit code $($result.ExitCode)"
+                }}
+                
+                Write-Host "Step 3: Getting USB partitions..."
+                Start-Sleep -Seconds 3
+                $usbPartitions = Get-Partition -DiskNumber $diskNumber
+                
+                # For MBR, get partitions by size and order
+                $sortedPartitions = $usbPartitions | Where-Object {{ $_.Type -ne 'Reserved' }} | Sort-Object PartitionNumber
+                
+                # First partition (smallest, ~100MB) is EFI
+                $efiPartition = $sortedPartitions | Select-Object -First 1
+                
+                # Second partition (~2GB) is main LinuxTV
+                $mainPartition = $sortedPartitions | Select-Object -Skip 1 -First 1
+                
+                if (-not $efiPartition) {{
+                    throw "EFI partition not found"
+                }}
+                if (-not $mainPartition) {{
+                    throw "Main partition not found"
+                }}
+                
+                Write-Host "EFI Partition: $($efiPartition.PartitionNumber) (Size: $([math]::Round($efiPartition.Size/1MB)) MB)"
+                Write-Host "Main Partition: $($mainPartition.PartitionNumber) (Size: $([math]::Round($mainPartition.Size/1MB)) MB)"
+                
+                Write-Host "Step 4: Assigning temporary drive letters..."
+                
+                # Assign drive letters using diskpart for reliability
+                $efiPartNum = $efiPartition.PartitionNumber
+                $mainPartNum = $mainPartition.PartitionNumber
+                
+                $assignEFIScript = @"
+select disk $diskNumber
+select partition $efiPartNum
+assign letter=Z
+exit
+"@
+                $tempFileEFI = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($tempFileEFI, $assignEFIScript)
+                Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFileEFI`"" -Wait -NoNewWindow
+                [System.IO.File]::Delete($tempFileEFI)
+                
+                $assignMainScript = @"
+select disk $diskNumber
+select partition $mainPartNum
+assign letter=Y
+exit
+"@
+                $tempFileMain = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($tempFileMain, $assignMainScript)
+                Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFileMain`"" -Wait -NoNewWindow
+                [System.IO.File]::Delete($tempFileMain)
+                
                 Start-Sleep -Seconds 2
                 
-                # Open device and write using stream
-                Write-Host "Writing ISO to USB..."
+                $efiDrive = "Z"
+                $mainDrive = "Y"
+                Write-Host "EFI drive: $efiDrive`:"
+                Write-Host "Main drive: $mainDrive`:"
                 
-                Add-Type -TypeDefinition @'
-                using System;
-                using System.Runtime.InteropServices;
-                using Microsoft.Win32.SafeHandles;
+                Write-Host "Step 5: Copying ISO contents to main partition..."
+                $isoContents = Get-ChildItem -Path "${{driveLetter}}:\" -Force | Where-Object {{ $_.Name -ne 'EFI' -and $_.Name -ne 'boot' }}
+                $totalFiles = ($isoContents | Measure-Object).Count
+                $copiedFiles = 0
                 
-                public class NativeDeviceWriter
-                {{
-                    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-                    private static extern SafeFileHandle CreateFile(
-                        string lpFileName,
-                        uint dwDesiredAccess,
-                        uint dwShareMode,
-                        IntPtr lpSecurityAttributes,
-                        uint dwCreationDisposition,
-                        uint dwFlagsAndAttributes,
-                        IntPtr hTemplateFile);
-                    
-                    [DllImport("kernel32.dll", SetLastError = true)]
-                    private static extern bool WriteFile(
-                        SafeFileHandle hFile,
-                        byte[] lpBuffer,
-                        uint nNumberOfBytesToWrite,
-                        out uint lpNumberOfBytesWritten,
-                        IntPtr lpOverlapped);
-                    
-                    public static SafeFileHandle OpenDevice(string devicePath, out int errorCode)
-                    {{
-                        const uint GENERIC_WRITE = 0x40000000;
-                        const uint FILE_SHARE_READ = 1;
-                        const uint FILE_SHARE_WRITE = 2;
-                        const uint OPEN_EXISTING = 3;
-                        
-                        errorCode = 0;
-                        var handle = CreateFile(devicePath, GENERIC_WRITE, 
-                                               FILE_SHARE_READ | FILE_SHARE_WRITE, 
-                                               IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
-                        
-                        if (handle.IsInvalid)
-                        {{
-                            errorCode = Marshal.GetLastWin32Error();
-                        }}
-                        return handle;
-                    }}
-                    
-                    public static bool WriteChunk(SafeFileHandle handle, byte[] data, out int errorCode)
-                    {{
-                        errorCode = 0;
-                        uint bytesWritten;
-                        bool result = WriteFile(handle, data, (uint)data.Length, out bytesWritten, IntPtr.Zero);
-                        
-                        if (!result)
-                        {{
-                            errorCode = Marshal.GetLastWin32Error();
-                        }}
-                        return result;
-                    }}
-                }}
-'@
-                
-                $isoStream = [System.IO.File]::OpenRead($isoPath)
-                $totalSize = $isoStream.Length
-                
-                $errorCode = 0
-                $deviceHandle = [NativeDeviceWriter]::OpenDevice($drivePath, [ref]$errorCode)
-                
-                if ($deviceHandle.IsInvalid) {{
-                    throw "Failed to open drive (Win32 error: $errorCode)"
-                }}
-                
-                $buffer = New-Object byte[] (4 * 1024 * 1024)  # 4MB buffer
-                $totalWritten = 0
-                $lastProgress = 0
-                
-                while (($read = $isoStream.Read($buffer, 0, $buffer.Length)) -gt 0) {{
-                    $chunk = $buffer[0..($read - 1)]
-                    
-                    $success = [NativeDeviceWriter]::WriteChunk($deviceHandle, $chunk, [ref]$errorCode)
-                    if (-not $success) {{
-                        $deviceHandle.Close()
-                        $isoStream.Close()
-                        throw "Write failed (Win32 error: $errorCode)"
-                    }}
-                    
-                    $totalWritten += $read
-                    $progress = [math]::Round(($totalWritten / $totalSize) * 100)
-                    
-                    if ($progress -gt $lastProgress) {{
+                foreach ($item in $isoContents) {{
+                    Copy-Item -Path $item.FullName -Destination "${{mainDrive}}:\" -Recurse -Force -ErrorAction SilentlyContinue
+                    $copiedFiles++
+                    $progress = [math]::Round(($copiedFiles / $totalFiles) * 100)
+                    if ($progress % 10 -eq 0) {{
                         Write-Host "PROGRESS:$progress"
-                        $lastProgress = $progress
                     }}
                 }}
                 
-                $deviceHandle.Close()
-                $isoStream.Close()
+                Write-Host "Step 6: Setting up GRUB bootloader on EFI partition..."
+                $grubDir = "${{efiDrive}}:\\EFI\\BOOT"
+                if (-not (Test-Path $grubDir)) {{
+                    New-Item -Path $grubDir -ItemType Directory -Force
+                }}
                 
-                Write-Host "Finalizing..."
-                Start-Sleep -Seconds 2
+                # Copy GRUB EFI bootloader
+                $sourceGRUB = "${{driveLetter}}:\\EFI\\BOOT"
+                if (Test-Path $sourceGRUB) {{
+                    Copy-Item -Path "$sourceGRUB\\*" -Destination $grubDir -Recurse -Force
+                    Write-Host "GRUB bootloader copied to EFI partition"
+                }} else {{
+                    Write-Host "WARNING: GRUB EFI files not found in ISO"
+                }}
+                
+                # Copy grub.cfg
+                $sourceGrubCfg = "${{driveLetter}}:\\boot\\grub\\grub.cfg"
+                $destGrubCfg = "${{efiDrive}}:\\EFI\\BOOT\\grub.cfg"
+                if (Test-Path $sourceGrubCfg) {{
+                    Copy-Item -Path $sourceGrubCfg -Destination $destGrubCfg -Force
+                    Write-Host "GRUB configuration copied"
+                }} else {{
+                    Write-Host "WARNING: grub.cfg not found"
+                }}
+                
+                Write-Host "Step 7: Copying remaining ISO files..."
+                # Copy boot folder if it exists
+                $sourceBoot = "${{driveLetter}}:\\boot"
+                if (Test-Path $sourceBoot) {{
+                    Copy-Item -Path $sourceBoot -Destination "${{mainDrive}}:\\" -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Host "Boot files copied"
+                }}
+                
+                Write-Host "PROGRESS:100"
+                Write-Host "Step 7: Cleaning up..."
+                
+                # Remove temporary drive letters
+                $removeLetters = @"
+select disk $diskNumber
+select partition $efiPartNum
+remove letter=Z noerr
+select partition $mainPartNum
+remove letter=Y noerr
+exit
+"@
+                $tempFileRemove = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($tempFileRemove, $removeLetters)
+                Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFileRemove`"" -Wait -NoNewWindow
+                [System.IO.File]::Delete($tempFileRemove)
+                
+                # Unmount ISO
+                Dismount-DiskImage -ImagePath $isoPath
+                
                 Write-Host "Flash completed successfully!"
             }}
             catch {{
                 Write-Host "`nERROR: $_" -ForegroundColor Red
+                Write-Host "Stack trace: $($_.ScriptStackTrace)" -ForegroundColor Red
                 exit 1
             }}
-            """.format(iso_file, device)
-            
-            # Run PowerShell and monitor progress
-            process = subprocess.Popen(
-                ['powershell', '-Command', ps_script],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Monitor output for progress
-            import re
-            while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
-                    break
-                if line:
-                    # Check for progress line
-                    match = re.search(r'PROGRESS:(\d+)', line.strip())
-                    if match:
-                        progress = int(match.group(1))
-                        self.update_progress(progress)
-                        self.update_status(f"Writing ISO... {progress}%")
-            
-            # Get remaining output
-            stderr = process.stderr.read()
-            process.wait()
-            
-            if process.returncode != 0:
-                error_msg = f"PowerShell write failed: {stderr}"
-                raise Exception(error_msg)
+        """.format(iso_file, disk_number, device)
+        
+        # Run PowerShell and monitor progress
+        process = subprocess.Popen(
+            ['powershell', '-Command', ps_script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        
+        # Monitor output for progress
+        import re
+        output_lines = []
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                line = line.strip()
+                output_lines.append(line)
+                print(line)
+                
+                # Check for progress line
+                match = re.search(r'PROGRESS:(\d+)', line)
+                if match:
+                    progress = int(match.group(1))
+                    self.update_progress(progress)
+                    self.update_status(f"Writing ISO... {progress}%")
+        
+        process.wait()
+        
+        if process.returncode != 0:
+            error_msg = f"PowerShell flash failed. Output:\n" + "\n".join(output_lines[-20:])
+            raise Exception(error_msg)
     
     def flash_macos(self, iso_file, device):
         """Flash ISO on macOS using dd"""
@@ -553,95 +630,142 @@ convert mbr
     
     def create_persistence_windows(self, device):
         """Create persistence partition on Windows"""
-        self.update_status("Waiting for disk to be recognized...")
         import time
+        import json
         time.sleep(5)
         
         disk_number = device.replace("\\\\.\\PhysicalDrive", "")
         
-        # First, rescan for disks
-        rescan_script = "rescan\nlist disk\nexit\n"
-        rescan_file = Path(os.environ['TEMP']) / "linuxtv_rescan.txt"
-        rescan_file.write_text(rescan_script)
-        rescan_result = subprocess.run(
-            ['diskpart', '/s', str(rescan_file)],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        rescan_file.unlink()
-        print(f"DiskPart rescan output: {rescan_result.stdout}")
+        # Wait for disk to settle after flash
+        self.update_status("Analyzing disk layout...")
         time.sleep(3)
         
-        # List current partitions
-        list_script = f"select disk {disk_number}\nlist partition\nexit\n"
-        list_file = Path(os.environ['TEMP']) / "linuxtv_list.txt"
-        list_file.write_text(list_script)
-        list_result = subprocess.run(
-            ['diskpart', '/s', str(list_file)],
+        # Get disk size
+        disk_size_result = subprocess.run(
+            ['powershell', '-Command', 
+             f'(Get-PhysicalDisk -DeviceNumber {disk_number}).Size'],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=10
         )
-        list_file.unlink()
-        print(f"Current partitions: {list_result.stdout}")
         
-        # Get ISO size to calculate how much space we need
-        iso_file = self.iso_path.get()
-        iso_size_mb = os.path.getsize(iso_file) / (1024 * 1024)
-        # Add 10% buffer for filesystem overhead
-        iso_size_with_buffer = int(iso_size_mb * 1.1)
+        if disk_size_result.returncode != 0:
+            print(f"Failed to get disk size: {disk_size_result.stderr}")
+            self.update_status("Warning: Could not get disk size")
+            return
         
-        print(f"ISO size: {iso_size_mb:.0f} MB, with buffer: {iso_size_with_buffer} MB")
+        try:
+            disk_size_bytes = int(disk_size_result.stdout.strip())
+            disk_size_mb = disk_size_bytes / (1024 * 1024)
+            print(f"Disk size: {disk_size_mb:.0f} MB ({disk_size_bytes} bytes)")
+        except:
+            print(f"Failed to parse disk size: {disk_size_result.stdout}")
+            self.update_status("Warning: Could not parse disk size")
+            return
         
-        # Delete partition 2 (the large data partition) and recreate it smaller
-        self.update_status("Recreating partition to leave space for persistence...")
-        print(f"Deleting partition 2 and recreating it at {iso_size_with_buffer} MB...")
-        
-        # Delete and recreate partition 2 with exact size needed
-        repartition_script = f"""
-select disk {disk_number}
-select partition 2
-delete partition override
-create partition primary size={iso_size_with_buffer}
-exit
-"""
-        repartition_file = Path(os.environ['TEMP']) / "linuxtv_repartition.txt"
-        repartition_file.write_text(repartition_script)
-        
-        repartition_result = subprocess.run(
-            ['diskpart', '/s', str(repartition_file)],
+        # Get partitions using PowerShell
+        partitions_result = subprocess.run(
+            ['powershell', '-Command', f'Get-Partition -DiskNumber {disk_number} | Select-Object PartitionNumber,Size,Type,DriveLetter | ConvertTo-Json'],
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=10
         )
-        repartition_file.unlink()
-        print(f"Repartition output: {repartition_result.stdout}")
-        print(f"Repartition errors: {repartition_result.stderr}")
         
-        time.sleep(2)
+        if partitions_result.returncode != 0:
+            print(f"Failed to get partition info: {partitions_result.stderr}")
+            self.update_status("Warning: Could not get partition information")
+            return
         
-        # Now create persistence partition in the remaining space
+        partitions = json.loads(partitions_result.stdout)
+        if isinstance(partitions, dict):
+            partitions = [partitions]
+        
+        print(f"Found {len(partitions)} partition(s)")
+        total_partition_size = 0
+        for p in partitions:
+            p_size = p.get('Size', 0)
+            p_size_mb = p_size / (1024*1024)
+            total_partition_size += p_size
+            print(f"  Partition {p.get('PartitionNumber')}: {p.get('Type')} - {p_size_mb:.0f} MB")
+        
+        # Calculate space needed for persistence (reserve 2GB for persistence)
+        persistence_size_mb = 2048  # 2GB
+        persistence_size_bytes = persistence_size_mb * 1024 * 1024
+        
+        # Check if there's enough unallocated space
+        used_space = total_partition_size
+        unallocated_space = disk_size_bytes - used_space
+        unallocated_mb = unallocated_space / (1024 * 1024)
+        
+        print(f"Total partition space: {total_partition_size / (1024*1024):.0f} MB")
+        print(f"Unallocated space: {unallocated_mb:.0f} MB")
+        
+        if unallocated_mb >= persistence_size_mb:
+            # Enough space already exists, just create the partition
+            print(f"Sufficient unallocated space ({unallocated_mb:.0f} MB), creating partition...")
+        else:
+            # Need to shrink the largest partition (usually the ISO partition)
+            print(f"Insufficient space. Need to shrink ISO partition by {persistence_size_mb - unallocated_mb:.0f} MB")
+            self.update_status("Resizing ISO partition to make room...")
+            
+            # Find the largest partition (usually partition 2 - the ISO9660)
+            largest_partition = max(partitions, key=lambda p: p.get('Size', 0))
+            largest_part_num = largest_partition.get('PartitionNumber')
+            largest_part_size = largest_partition.get('Size', 0)
+            
+            # Calculate new size (leave room for persistence + 100MB buffer)
+            shrink_amount = persistence_size_bytes + (100 * 1024 * 1024)  # 2GB + 100MB buffer
+            new_size = largest_part_size - shrink_amount
+            new_size_mb = new_size / (1024 * 1024)
+            
+            print(f"Shrinking partition {largest_part_num} from {largest_part_size / (1024*1024):.0f} MB to {new_size_mb:.0f} MB")
+            
+            # Shrink the partition
+            shrink_script = f"select disk {disk_number}\nselect partition {largest_part_num}\nshrink desired={int(persistence_size_mb + 100)}\nexit\n"
+            shrink_file = Path(os.environ['TEMP']) / "linuxtv_shrink.txt"
+            shrink_file.write_text(shrink_script)
+            
+            shrink_result = subprocess.run(
+                ['diskpart', '/s', str(shrink_file)],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            shrink_file.unlink()
+            
+            print(f"Shrink output: {shrink_result.stdout}")
+            if shrink_result.returncode != 0:
+                print(f"Shrink errors: {shrink_result.stderr}")
+                self.update_status("Warning: Failed to resize partition")
+                print("NOTE: The ISO partition may not support shrinking.")
+                print("Solution: The setup-persistence.sh script on LinuxTV will handle this on first boot.")
+                return
+            
+            time.sleep(3)
+        
+        # Create persistence partition in the freed space
         self.update_status("Creating persistence partition...")
-        print("Creating persistence partition in remaining space...")
+        print("Creating persistence partition in unallocated space...")
         
-        diskpart_script = f"select disk {disk_number}\ncreate partition primary\nexit\n"
-        temp_file = Path(os.environ['TEMP']) / "linuxtv_diskpart.txt"
-        temp_file.write_text(diskpart_script)
+        persist_script = f"select disk {disk_number}\ncreate partition primary size={persistence_size_mb}\nexit\n"
+        persist_file = Path(os.environ['TEMP']) / "linuxtv_persist.txt"
+        persist_file.write_text(persist_script)
         
-        process = subprocess.run(
-            ['diskpart', '/s', str(temp_file)],
+        result = subprocess.run(
+            ['diskpart', '/s', str(persist_file)],
             capture_output=True,
             text=True,
             timeout=60
         )
-        temp_file.unlink()
+        persist_file.unlink()
         
-        print(f"Persistence partition output: {process.stdout}")
-        print(f"Persistence partition errors: {process.stderr}")
+        print(f"Create persistence output: {result.stdout}")
+        print(f"Create persistence errors: {result.stderr}")
         
-        if process.returncode != 0:
-            self.update_status("Warning: Persistence partition creation had issues")
+        if result.returncode != 0:
+            self.update_status("Warning: Persistence partition creation failed")
+            print("NOTE: The ISO partition may be using all disk space.")
+            print("Solution: The setup-persistence.sh script on LinuxTV will handle this on first boot.")
         else:
             self.update_status("Persistence partition created!")
             time.sleep(2)
@@ -753,9 +877,16 @@ exit
     
     def find_dd_windows(self):
         """Find dd executable on Windows"""
+        # Check for dd.exe in the same directory as the flash tool
+        dd_local = Path(__file__).parent / "dd.exe"
+        if dd_local.exists():
+            return str(dd_local)
+        
         possible_paths = [
             r"C:\Program Files\GnuWin32\bin\dd.exe",
             r"C:\Program Files (x86)\GnuWin32\bin\dd.exe",
+            r"C:\cygwin64\bin\dd.exe",
+            r"C:\cygwin\bin\dd.exe",
         ]
         
         for path in possible_paths:
