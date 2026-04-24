@@ -6,7 +6,8 @@
 set -e
 
 # Find the USB boot device (the one with the live system)
-BOOT_DEVICE=$(findmnt -n -o SOURCE /live 2>/dev/null || echo "")
+BOOT_DEVICE=$(findmnt -n -o SOURCE /run/live/medium 2>/dev/null || \
+              findmnt -n -o SOURCE /lib/live/mount/medium 2>/dev/null || echo "")
 
 if [ -z "$BOOT_DEVICE" ]; then
     # Not booted from USB, exit
@@ -33,6 +34,9 @@ echo "Found persistence partition: $PERSIST_PARTITION"
 # Check filesystem type
 FS_TYPE=$(blkid -s TYPE -o value "$PERSIST_PARTITION" 2>/dev/null || echo "")
 
+# Track whether we need to reboot after setup
+NEEDS_REBOOT=false
+
 # If it has no filesystem type or is not ext4, format it
 if [ -z "$FS_TYPE" ] || [ "$FS_TYPE" != "ext4" ]; then
     echo "Partition is not ext4 (current type: ${FS_TYPE:-none})."
@@ -45,6 +49,7 @@ if [ -z "$FS_TYPE" ] || [ "$FS_TYPE" != "ext4" ]; then
     mkfs.ext4 -F -L persistence "$PERSIST_PARTITION"
     
     echo "Partition formatted as ext4."
+    NEEDS_REBOOT=true
 else
     echo "Partition is already ext4."
 fi
@@ -59,9 +64,17 @@ if mount "$PERSIST_PARTITION" "$MOUNT_POINT" 2>/dev/null; then
     else
         echo "persistence.conf already exists."
     fi
-    umount "$MOUNT_POINT"
+    umount "$MOUNT_POINT" 2>/dev/null || true
+    rmdir "$MOUNT_POINT" 2>/dev/null || true
+    
     echo "Persistence setup complete!"
+    
+    # If we just formatted the partition, reboot so live-boot initramfs
+    # picks up the new persistence partition on next boot
+    if [ "$NEEDS_REBOOT" = true ]; then
+        echo "Rebooting to activate persistence..."
+        reboot
+    fi
 fi
-rmdir "$MOUNT_POINT"
 
 exit 0
