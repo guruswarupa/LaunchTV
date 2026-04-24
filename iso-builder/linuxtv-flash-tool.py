@@ -411,7 +411,6 @@ active
 create partition primary size=$isoSizeMB
 format quick fs=fat32 label="LinuxTV"
 create partition primary
-format quick fs=exfat label="persistence"
 exit
 "@
                 $tempFile = [System.IO.Path]::GetTempFileName()
