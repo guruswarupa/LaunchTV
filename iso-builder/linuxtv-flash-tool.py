@@ -605,6 +605,9 @@ exit
             raise Exception(f"dd failed: {process.stderr.decode()}")
         
         subprocess.run(['sync'])
+        
+        # Create persistence partition automatically (like Windows and Linux do)
+        self.create_persistence_partition(device)
     
     def flash_linux(self, iso_file, device):
         """Flash ISO on Linux using dd"""
@@ -615,6 +618,9 @@ exit
         process = subprocess.run(cmd, capture_output=True, timeout=3600)
         if process.returncode != 0:
             raise Exception(f"dd failed: {process.stderr.decode()}")
+        
+        # Create persistence partition automatically (like Windows does)
+        self.create_persistence_partition(device)
     
     def create_persistence_partition(self, device):
         """Create persistence partition (without formatting)"""
@@ -784,13 +790,57 @@ exit
     
     def create_persistence_macos(self, device):
         """Create persistence partition on macOS"""
+        self.update_status("Waiting for disk to be recognized...")
+        time.sleep(3)
+        
         disk_id = device.replace("/dev/", "")
+        
+        # Get disk information to find the ISO partition
+        result = subprocess.run(
+            ['diskutil', 'list', f"/dev/{disk_id}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            print(f"Failed to get disk info: {result.stderr}")
+            raise Exception("Could not detect disk partitions. Try unplugging and replugging the USB.")
+        
+        print(f"Disk layout before partitioning:\n{result.stdout}")
+        
+        # Resize the second partition (ISO partition) and create persistence partition
+        # Using 'R' to resize to minimum needed, leaving remaining space for persistence
+        self.update_status("Creating persistence partition...")
         
         cmd = ['sudo', 'diskutil', 'resizeVolume', f"/dev/{disk_id}s2", 'R',
                'Free Space', 'free',
                'LinuxTVPersistence', '0b']
         
-        subprocess.run(cmd, capture_output=True, timeout=60)
+        print(f"Running: {' '.join(cmd)}")
+        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
+        print(f"diskutil output: {process.stdout}")
+        if process.stderr:
+            print(f"diskutil errors: {process.stderr}")
+        
+        if process.returncode != 0:
+            print("WARNING: macOS partition creation failed")
+            print("The ISO may have an unsupported filesystem for resizing.")
+            print("Solution: The setup-persistence.sh script on LinuxTV will handle this on first boot.")
+            self.update_status("Warning: Persistence partition creation failed")
+        else:
+            self.update_status("Persistence partition created successfully!")
+            time.sleep(2)
+            
+            # Verify partition was created
+            verify_result = subprocess.run(
+                ['diskutil', 'list', f"/dev/{disk_id}"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            print(f"Final disk layout:\n{verify_result.stdout}")
     
     def create_persistence_linux(self, device):
         """Create persistence partition on Linux"""
