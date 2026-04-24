@@ -47,7 +47,17 @@ class LinuxTVFlashTool:
             text="LinuxTV Flash Tool",
             font=("Helvetica", 18, "bold")
         )
-        title_label.pack(pady=(0, 20))
+        title_label.pack(pady=(0, 10))
+        
+        # Admin status warning
+        if sys.platform == 'win32' and not self.check_admin_windows():
+            admin_warning = ttk.Label(
+                main_frame,
+                text="⚠ Not running as Administrator - Flash will fail!",
+                foreground="red",
+                font=("Helvetica", 10, "bold")
+            )
+            admin_warning.pack(pady=(0, 10))
         
         # ISO Selection
         iso_frame = ttk.LabelFrame(main_frame, text="Step 1: Select ISO File", padding="10")
@@ -225,10 +235,30 @@ class LinuxTVFlashTool:
         
         return drives
     
+    def check_admin_windows(self):
+        """Check if running as Administrator on Windows"""
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except:
+            return False
+    
     def start_flash(self):
         """Start the flashing process"""
         if self.is_flashing:
             messagebox.showwarning("Warning", "Flash operation already in progress!")
+            return
+        
+        # Check for admin rights on Windows
+        if sys.platform == 'win32' and not self.check_admin_windows():
+            messagebox.showerror(
+                "Administrator Rights Required",
+                "This tool must be run as Administrator to flash USB drives.\n\n"
+                "Please close this tool and run it again by:\n"
+                "1. Right-clicking on the Python script or shortcut\n"
+                "2. Selecting 'Run as administrator'\n"
+                "3. Clicking 'Yes' when prompted by UAC"
+            )
             return
         
         # Validate inputs
@@ -298,8 +328,9 @@ class LinuxTVFlashTool:
             ))
         
         except Exception as e:
-            self.update_status(f"Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", f"Flash failed:\n{str(e)}"))
+            error_message = str(e)
+            self.update_status(f"Error: {error_message}")
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Flash failed:\n{error_message}"))
         
         finally:
             self.is_flashing = False
@@ -317,26 +348,171 @@ class LinuxTVFlashTool:
             if process.returncode != 0:
                 raise Exception(f"dd failed: {process.stderr}")
         else:
-            ps_script = f"""
-            $iso = "{iso_file}"
-            $drive = "{device}"
-            $isoStream = [System.IO.File]::OpenRead($iso)
-            $driveStream = [System.IO.File]::OpenWrite($drive)
-            $buffer = New-Object byte[] 4194304
-            while (($read = $isoStream.Read($buffer, 0, $buffer.Length)) -gt 0) {{
-                $driveStream.Write($buffer, 0, $read)
+            # Use PowerShell with progress monitoring
+            ps_script = """
+            $ErrorActionPreference = "Stop"
+            $isoPath = "{}"
+            $drivePath = "{}"
+            
+            try {{
+                Write-Host "Starting flash process..."
+                
+                # Extract disk number
+                $diskNumber = $drivePath -replace '\\\\\\\\.\\\\PhysicalDrive', ''
+                
+                # Clean the disk
+                Write-Host "Preparing disk..."
+                $diskpartClean = @"
+select disk $diskNumber
+attributes disk clear readonly
+offline disk
+online disk
+clean
+convert mbr
+"@
+                $tempFile1 = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($tempFile1, $diskpartClean)
+                Start-Process "diskpart.exe" -ArgumentList "/s `"$tempFile1`"" -Wait -NoNewWindow
+                [System.IO.File]::Delete($tempFile1)
+                Start-Sleep -Seconds 2
+                
+                # Open device and write using stream
+                Write-Host "Writing ISO to USB..."
+                
+                Add-Type -TypeDefinition @'
+                using System;
+                using System.Runtime.InteropServices;
+                using Microsoft.Win32.SafeHandles;
+                
+                public class NativeDeviceWriter
+                {{
+                    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+                    private static extern SafeFileHandle CreateFile(
+                        string lpFileName,
+                        uint dwDesiredAccess,
+                        uint dwShareMode,
+                        IntPtr lpSecurityAttributes,
+                        uint dwCreationDisposition,
+                        uint dwFlagsAndAttributes,
+                        IntPtr hTemplateFile);
+                    
+                    [DllImport("kernel32.dll", SetLastError = true)]
+                    private static extern bool WriteFile(
+                        SafeFileHandle hFile,
+                        byte[] lpBuffer,
+                        uint nNumberOfBytesToWrite,
+                        out uint lpNumberOfBytesWritten,
+                        IntPtr lpOverlapped);
+                    
+                    public static SafeFileHandle OpenDevice(string devicePath, out int errorCode)
+                    {{
+                        const uint GENERIC_WRITE = 0x40000000;
+                        const uint FILE_SHARE_READ = 1;
+                        const uint FILE_SHARE_WRITE = 2;
+                        const uint OPEN_EXISTING = 3;
+                        
+                        errorCode = 0;
+                        var handle = CreateFile(devicePath, GENERIC_WRITE, 
+                                               FILE_SHARE_READ | FILE_SHARE_WRITE, 
+                                               IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                        
+                        if (handle.IsInvalid)
+                        {{
+                            errorCode = Marshal.GetLastWin32Error();
+                        }}
+                        return handle;
+                    }}
+                    
+                    public static bool WriteChunk(SafeFileHandle handle, byte[] data, out int errorCode)
+                    {{
+                        errorCode = 0;
+                        uint bytesWritten;
+                        bool result = WriteFile(handle, data, (uint)data.Length, out bytesWritten, IntPtr.Zero);
+                        
+                        if (!result)
+                        {{
+                            errorCode = Marshal.GetLastWin32Error();
+                        }}
+                        return result;
+                    }}
+                }}
+'@
+                
+                $isoStream = [System.IO.File]::OpenRead($isoPath)
+                $totalSize = $isoStream.Length
+                
+                $errorCode = 0
+                $deviceHandle = [NativeDeviceWriter]::OpenDevice($drivePath, [ref]$errorCode)
+                
+                if ($deviceHandle.IsInvalid) {{
+                    throw "Failed to open drive (Win32 error: $errorCode)"
+                }}
+                
+                $buffer = New-Object byte[] (4 * 1024 * 1024)  # 4MB buffer
+                $totalWritten = 0
+                $lastProgress = 0
+                
+                while (($read = $isoStream.Read($buffer, 0, $buffer.Length)) -gt 0) {{
+                    $chunk = $buffer[0..($read - 1)]
+                    
+                    $success = [NativeDeviceWriter]::WriteChunk($deviceHandle, $chunk, [ref]$errorCode)
+                    if (-not $success) {{
+                        $deviceHandle.Close()
+                        $isoStream.Close()
+                        throw "Write failed (Win32 error: $errorCode)"
+                    }}
+                    
+                    $totalWritten += $read
+                    $progress = [math]::Round(($totalWritten / $totalSize) * 100)
+                    
+                    if ($progress -gt $lastProgress) {{
+                        Write-Host "PROGRESS:$progress"
+                        $lastProgress = $progress
+                    }}
+                }}
+                
+                $deviceHandle.Close()
+                $isoStream.Close()
+                
+                Write-Host "Finalizing..."
+                Start-Sleep -Seconds 2
+                Write-Host "Flash completed successfully!"
             }}
-            $isoStream.Close()
-            $driveStream.Close()
-            """
-            process = subprocess.run(
+            catch {{
+                Write-Host "`nERROR: $_" -ForegroundColor Red
+                exit 1
+            }}
+            """.format(iso_file, device)
+            
+            # Run PowerShell and monitor progress
+            process = subprocess.Popen(
                 ['powershell', '-Command', ps_script],
-                capture_output=True,
-                text=True,
-                timeout=3600
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
+            
+            # Monitor output for progress
+            import re
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    # Check for progress line
+                    match = re.search(r'PROGRESS:(\d+)', line.strip())
+                    if match:
+                        progress = int(match.group(1))
+                        self.update_progress(progress)
+                        self.update_status(f"Writing ISO... {progress}%")
+            
+            # Get remaining output
+            stderr = process.stderr.read()
+            process.wait()
+            
             if process.returncode != 0:
-                raise Exception(f"PowerShell write failed: {process.stderr}")
+                error_msg = f"PowerShell write failed: {stderr}"
+                raise Exception(error_msg)
     
     def flash_macos(self, iso_file, device):
         """Flash ISO on macOS using dd"""
@@ -377,13 +553,79 @@ class LinuxTVFlashTool:
     
     def create_persistence_windows(self, device):
         """Create persistence partition on Windows"""
+        self.update_status("Waiting for disk to be recognized...")
+        import time
+        time.sleep(5)
+        
         disk_number = device.replace("\\\\.\\PhysicalDrive", "")
         
-        diskpart_script = f"""
+        # First, rescan for disks
+        rescan_script = "rescan\nlist disk\nexit\n"
+        rescan_file = Path(os.environ['TEMP']) / "linuxtv_rescan.txt"
+        rescan_file.write_text(rescan_script)
+        rescan_result = subprocess.run(
+            ['diskpart', '/s', str(rescan_file)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        rescan_file.unlink()
+        print(f"DiskPart rescan output: {rescan_result.stdout}")
+        time.sleep(3)
+        
+        # List current partitions
+        list_script = f"select disk {disk_number}\nlist partition\nexit\n"
+        list_file = Path(os.environ['TEMP']) / "linuxtv_list.txt"
+        list_file.write_text(list_script)
+        list_result = subprocess.run(
+            ['diskpart', '/s', str(list_file)],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        list_file.unlink()
+        print(f"Current partitions: {list_result.stdout}")
+        
+        # Get ISO size to calculate how much space we need
+        iso_file = self.iso_path.get()
+        iso_size_mb = os.path.getsize(iso_file) / (1024 * 1024)
+        # Add 10% buffer for filesystem overhead
+        iso_size_with_buffer = int(iso_size_mb * 1.1)
+        
+        print(f"ISO size: {iso_size_mb:.0f} MB, with buffer: {iso_size_with_buffer} MB")
+        
+        # Delete partition 2 (the large data partition) and recreate it smaller
+        self.update_status("Recreating partition to leave space for persistence...")
+        print(f"Deleting partition 2 and recreating it at {iso_size_with_buffer} MB...")
+        
+        # Delete and recreate partition 2 with exact size needed
+        repartition_script = f"""
 select disk {disk_number}
-create partition primary
+select partition 2
+delete partition override
+create partition primary size={iso_size_with_buffer}
 exit
 """
+        repartition_file = Path(os.environ['TEMP']) / "linuxtv_repartition.txt"
+        repartition_file.write_text(repartition_script)
+        
+        repartition_result = subprocess.run(
+            ['diskpart', '/s', str(repartition_file)],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        repartition_file.unlink()
+        print(f"Repartition output: {repartition_result.stdout}")
+        print(f"Repartition errors: {repartition_result.stderr}")
+        
+        time.sleep(2)
+        
+        # Now create persistence partition in the remaining space
+        self.update_status("Creating persistence partition...")
+        print("Creating persistence partition in remaining space...")
+        
+        diskpart_script = f"select disk {disk_number}\ncreate partition primary\nexit\n"
         temp_file = Path(os.environ['TEMP']) / "linuxtv_diskpart.txt"
         temp_file.write_text(diskpart_script)
         
@@ -395,8 +637,27 @@ exit
         )
         temp_file.unlink()
         
+        print(f"Persistence partition output: {process.stdout}")
+        print(f"Persistence partition errors: {process.stderr}")
+        
         if process.returncode != 0:
-            print(f"Warning: Partition creation had issues: {process.stdout}")
+            self.update_status("Warning: Persistence partition creation had issues")
+        else:
+            self.update_status("Persistence partition created!")
+            time.sleep(2)
+            
+            # Verify partition was created
+            verify_script = f"select disk {disk_number}\nlist partition\nexit\n"
+            verify_file = Path(os.environ['TEMP']) / "linuxtv_verify.txt"
+            verify_file.write_text(verify_script)
+            verify_result = subprocess.run(
+                ['diskpart', '/s', str(verify_file)],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            verify_file.unlink()
+            print(f"Final partitions: {verify_result.stdout}")
     
     def create_persistence_macos(self, device):
         """Create persistence partition on macOS"""
