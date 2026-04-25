@@ -61,6 +61,7 @@ plymouth-themes
 kodi
 kodi-repository-kodi
 kodi-inputstream-adaptive
+kodi-inputstream-ffmpegdirect
 kodi-pvr-iptvsimple
 vlc
 

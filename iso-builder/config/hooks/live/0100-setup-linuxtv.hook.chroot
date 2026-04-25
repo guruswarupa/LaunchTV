@@ -55,8 +55,15 @@ apt-get install -y brave-browser
 # Install Stremio from custom repository
 wget -qO - https://debian.vejeta.com/key.gpg | gpg --dearmor -o /usr/share/keyrings/stremio-debian.gpg
 echo "deb [signed-by=/usr/share/keyrings/stremio-debian.gpg] https://debian.vejeta.com trixie main non-free" > /etc/apt/sources.list.d/stremio.list
+
+# Install Proton VPN from official repository
+wget -q https://repo.protonvpn.com/debian/dists/stable/main/binary-all/protonvpn-stable-release_1.0.8_all.deb
+dpkg -i ./protonvpn-stable-release_1.0.8_all.deb
+rm -f ./protonvpn-stable-release_1.0.8_all.deb
+
 apt-get update
 apt-get install -y stremio stremio-server
+apt-get install -y proton-vpn-gnome-desktop
 
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$INSTALL_DIR"
 chown -R "${LINUXTV_USER}:${LINUXTV_USER}" "$VENV_DIR"

@@ -57,3 +57,6 @@ native_apps:
   - name: "VLC"
     cmd: "vlc"
     icon: "icons/vlc.png"
+  - name: "Proton VPN"
+    cmd: "protonvpn"
+    icon: "icons/protonvpn.png"
