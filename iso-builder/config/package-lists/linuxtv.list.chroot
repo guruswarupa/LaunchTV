@@ -59,7 +59,14 @@ plymouth-themes
 
 # Media apps
 kodi
+kodi-repository-kodi
+kodi-inputstream-adaptive
+kodi-pvr-iptvsimple
 vlc
+
+# Python dependencies for Kodi addons
+python3-requests
+python3-m3u8
 
 # Networking
 network-manager

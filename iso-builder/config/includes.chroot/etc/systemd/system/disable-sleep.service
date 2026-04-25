@@ -1,0 +1,10 @@
+[Unit]
+Description=Disable screen blanking and sleep
+After=graphical.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/disable-sleep.sh
+
+[Install]
+WantedBy=graphical.target

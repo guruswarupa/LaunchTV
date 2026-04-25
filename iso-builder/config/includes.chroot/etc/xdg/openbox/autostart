@@ -1,0 +1,6 @@
+#!/bin/bash
+# Disable X11 screen blanking after display starts
+xset -dpms
+xset s off
+xset s noblank
+echo "X11 screen blanking disabled"
