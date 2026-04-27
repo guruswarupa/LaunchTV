@@ -33,10 +33,12 @@ def modify_launcher():
         current_wifi="",
         wifi_refresh_callback=None,
         wifi_connect_callback=None,
+        wifi_remove_callback=None,
         bluetooth_devices=None,
         current_bluetooth="",
         bluetooth_refresh_callback=None,
         bluetooth_connect_callback=None,
+        bluetooth_remove_callback=None,
         update_callback=None,
         parent=None,
     ):"""
@@ -51,14 +53,18 @@ def modify_launcher():
         self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)"""
     new_state = """        self.wifi_refresh_callback = wifi_refresh_callback
         self.wifi_connect_callback = wifi_connect_callback
+        self.wifi_remove_callback = wifi_remove_callback
         self.bluetooth_refresh_callback = bluetooth_refresh_callback
         self.bluetooth_connect_callback = bluetooth_connect_callback
+        self.bluetooth_remove_callback = bluetooth_remove_callback
         self.update_callback = update_callback
         self._wifi_scan_in_progress = False
         self._wifi_has_loaded = bool(wifi_networks or current_wifi)
+        self._wifi_last_scan_time = 0.0
         self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)
         self._bluetooth_scan_in_progress = False
         self._bluetooth_has_loaded = bool(bluetooth_devices or current_bluetooth)
+        self._bluetooth_last_scan_time = 0.0
         self.bluetooth_scan_finished.connect(self.handle_bluetooth_scan_finished)"""
     content = content.replace(old_state, new_state)
     
@@ -118,6 +124,11 @@ def modify_launcher():
         self.refresh_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
         self.refresh_bluetooth_button.clicked.connect(self.refresh_bluetooth_devices)
         bluetooth_button_row.addWidget(self.refresh_bluetooth_button)
+
+        self.remove_bluetooth_button = QPushButton("Remove Device")
+        self.remove_bluetooth_button.setProperty("tileVariant", "dialogSecondary")
+        self.remove_bluetooth_button.clicked.connect(self.remove_bluetooth)
+        bluetooth_button_row.addWidget(self.remove_bluetooth_button)
 
         self.connect_bluetooth_button = QPushButton("Connect Device")
         self.connect_bluetooth_button.setProperty("tileVariant", "accent")
@@ -218,6 +229,7 @@ def modify_launcher():
         self._bluetooth_scan_in_progress = loading
         self.refresh_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_refresh_callback))
         self.connect_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_connect_callback))
+        self.remove_bluetooth_button.setEnabled(not loading and bool(self.bluetooth_remove_callback))
         if loading and message:
             self.bluetooth_status_label.setText(message)
 
@@ -228,7 +240,10 @@ def modify_launcher():
             return
         if self._bluetooth_scan_in_progress:
             return
-        if self._bluetooth_has_loaded and not force:
+        # Check if cache is still valid (2 minutes)
+        import time
+        cache_valid = self._bluetooth_has_loaded and (time.time() - self._bluetooth_last_scan_time < 120)
+        if cache_valid and not force:
             return
         status_text = "Refreshing Bluetooth devices..." if force else "Fetching nearby Bluetooth devices..."
         self.set_bluetooth_loading_state(True, status_text)
@@ -251,6 +266,8 @@ def modify_launcher():
     def handle_bluetooth_scan_finished(self, bluetooth_devices, current_bluetooth, message):
         self.set_bluetooth_loading_state(False)
         self._bluetooth_has_loaded = True
+        import time
+        self._bluetooth_last_scan_time = time.time()
         self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
         if message:
             self.bluetooth_status_label.setText(message)
@@ -302,7 +319,30 @@ def modify_launcher():
         success, message, current_bluetooth = self.bluetooth_connect_callback(selected_device)
         if current_bluetooth:
              self.refresh_bluetooth_devices()
-        self.bluetooth_status_label.setText(message)"""
+        self.bluetooth_status_label.setText(message)
+
+    def remove_bluetooth(self):
+        # Remove/unpair a Bluetooth device.
+        if self._bluetooth_scan_in_progress:
+            self.bluetooth_status_label.setText("Still fetching nearby Bluetooth devices. Try again in a moment.")
+            return
+        if not self.bluetooth_remove_callback:
+            self.bluetooth_status_label.setText("Bluetooth removal is not available on this system.")
+            return
+        selected_device = self.bluetooth_combo.currentData()
+        if not isinstance(selected_device, dict):
+            selected_device = {"mac": self.bluetooth_combo.currentText().strip()}
+        
+        mac = selected_device.get("mac", "").strip()
+        if not mac:
+            self.bluetooth_status_label.setText("Select a device to remove.")
+            return
+        
+        success, message = self.bluetooth_remove_callback(selected_device)
+        if success:
+            self.refresh_bluetooth_devices()
+        self.bluetooth_status_label.setText(message)
+"""
     content = content.replace(old_connect_wifi, new_bluetooth_methods)
 
     # 9. open_remote_settings instantiation
@@ -325,10 +365,12 @@ def modify_launcher():
             "",
             self.scan_wifi_networks,
             self.connect_to_wifi,
+            self.disconnect_from_wifi,
             [],
             "",
             self.scan_bluetooth_devices,
             self.connect_to_bluetooth,
+            self.remove_bluetooth_device,
             self.update_from_github,
             self,
         )"""
