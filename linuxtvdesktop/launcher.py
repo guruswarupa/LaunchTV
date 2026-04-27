@@ -2215,7 +2215,7 @@ class TileButton(QPushButton):
 
 
 class AppCard(QWidget):
-    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, show_actions: bool = True, metrics=None):
+    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, favorite_callback=None, reorder_callback=None, show_actions: bool = True, metrics=None):
         super().__init__()
         metrics = metrics or {}
         action_button_size = int(metrics.get("action_button_size", 44))
@@ -2238,7 +2238,37 @@ class AppCard(QWidget):
 
         self.edit_button = None
         self.delete_button = None
+        self.favorite_button = None
+        self.move_left_button = None
+        self.move_right_button = None
         if show_actions:
+            self.favorite_button = QToolButton(self)
+            self.favorite_button.setObjectName("favoriteButton")
+            self.favorite_button.setText("☆")  # Empty star by default
+            self.favorite_button.setToolTip("Add to favorites")
+            self.favorite_button.clicked.connect(favorite_callback)
+            self.favorite_button.setCursor(Qt.PointingHandCursor)
+            self.favorite_button.setFocusPolicy(Qt.NoFocus)
+            self.favorite_button.setFixedSize(action_button_size, action_button_size)
+            
+            self.move_left_button = QToolButton(self)
+            self.move_left_button.setObjectName("reorderButton")
+            self.move_left_button.setText("◀")
+            self.move_left_button.setToolTip("Move left")
+            self.move_left_button.clicked.connect(lambda: reorder_callback("left"))
+            self.move_left_button.setCursor(Qt.PointingHandCursor)
+            self.move_left_button.setFocusPolicy(Qt.NoFocus)
+            self.move_left_button.setFixedSize(action_button_size, action_button_size)
+            
+            self.move_right_button = QToolButton(self)
+            self.move_right_button.setObjectName("reorderButton")
+            self.move_right_button.setText("▶")
+            self.move_right_button.setToolTip("Move right")
+            self.move_right_button.clicked.connect(lambda: reorder_callback("right"))
+            self.move_right_button.setCursor(Qt.PointingHandCursor)
+            self.move_right_button.setFocusPolicy(Qt.NoFocus)
+            self.move_right_button.setFixedSize(action_button_size, action_button_size)
+            
             self.edit_button = QToolButton(self)
             self.edit_button.setObjectName("editButton")
             self.edit_button.setText("⚙")
@@ -2265,14 +2295,21 @@ class AppCard(QWidget):
 
     def resizeEvent(self, event):
         self.tile_button.update_geometry_targets(self.rect())
-        if self.edit_button is not None and self.delete_button is not None:
-            # Align both buttons horizontally at the top right
+        if self.favorite_button is not None and self.move_left_button is not None and self.move_right_button is not None and self.edit_button is not None and self.delete_button is not None:
+            # Align all buttons horizontally at the top right
             button_y = 12
-            button_spacing = 8
-            # Delete button on the right
-            self.delete_button.move(self.width() - self.delete_button.width() - 12, button_y)
-            # Edit button to the left of delete button
-            self.edit_button.move(self.width() - self.edit_button.width() - self.delete_button.width() - 12 - button_spacing, button_y)
+            button_spacing = 6
+            button_width = self.delete_button.width()
+            
+            # Calculate total width needed for 5 buttons
+            total_buttons_width = 5 * button_width + 4 * button_spacing
+            
+            # Position from right to left: delete, edit, move_right, move_left, favorite
+            self.delete_button.move(self.width() - button_width - 12, button_y)
+            self.edit_button.move(self.width() - button_width - button_width - 12 - button_spacing, button_y)
+            self.move_right_button.move(self.width() - 2*button_width - button_width - 12 - 2*button_spacing, button_y)
+            self.move_left_button.move(self.width() - 3*button_width - button_width - 12 - 3*button_spacing, button_y)
+            self.favorite_button.move(self.width() - 4*button_width - button_width - 12 - 4*button_spacing, button_y)
         super().resizeEvent(event)
 
     def enterEvent(self, event):
@@ -4397,6 +4434,44 @@ class LauncherWindow(QMainWindow):
                 background-color: #1158c7;
                 border: 1px solid #58a6ff;
             }
+            QToolButton#favoriteButton {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
+                color: #d29922;
+                border: 1px solid rgba(210, 153, 34, 0.5);
+                border-radius: 14px;
+                font-size: 20px;
+                padding-bottom: 2px;
+            }
+            QToolButton#favoriteButton:hover {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #d29922, stop:1 #bb8009);
+                color: #ffffff;
+                border: 1px solid #d29922;
+            }
+            QToolButton#favoriteButton:pressed {
+                background-color: #9e6a03;
+                border: 1px solid #d29922;
+            }
+            QToolButton#reorderButton {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
+                color: #8b949e;
+                border: 1px solid rgba(76, 83, 91, 0.5);
+                border-radius: 14px;
+                font-size: 16px;
+                padding-bottom: 2px;
+            }
+            QToolButton#reorderButton:hover {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(58, 64, 71, 0.95), stop:1 rgba(48, 54, 61, 0.95));
+                color: #e6edf3;
+                border: 1px solid rgba(88, 96, 105, 0.7);
+            }
+            QToolButton#reorderButton:pressed {
+                background-color: rgba(38, 43, 50, 0.95);
+                border: 1px solid rgba(76, 83, 91, 0.7);
+            }
             QToolButton#deleteButton {
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 rgba(72, 23, 23, 0.9), stop:1 rgba(58, 18, 18, 0.95));
@@ -4607,12 +4682,27 @@ class LauncherWindow(QMainWindow):
                 tile.entry_kind = entry["kind"]
                 tile.entry_item = app
                 tile.clicked.connect(lambda checked=False, item=app, kind=entry["kind"]: self.launch_app(item, kind))
+                
+                # Create callbacks with proper closure
+                current_app = app
+                current_kind = entry["kind"]
+                current_index = card_index
+                current_entries = entries
+                
                 card = AppCard(
                     tile,
-                    lambda checked=False, item=app, kind=entry["kind"]: self.prompt_edit_entry(kind, item),
-                    lambda checked=False, item=app, kind=entry["kind"]: self.prompt_delete_entry(kind, item),
+                    lambda checked=False, item=current_app, kind=current_kind: self.prompt_edit_entry(kind, item),
+                    lambda checked=False, item=current_app, kind=current_kind: self.prompt_delete_entry(kind, item),
+                    lambda checked=False, item=current_app, kind=current_kind: self.toggle_favorite(item, kind),
+                    lambda direction, item=current_app, kind=current_kind, idx=current_index: self.reorder_app(item, kind, direction, idx, current_entries),
                     metrics=self.ui_metrics,
                 )
+                
+                # Update favorite button state
+                is_favorited = self.is_app_favorited(current_app, current_kind)
+                if card.favorite_button:
+                    card.favorite_button.setText("★" if is_favorited else "☆")
+                    card.favorite_button.setToolTip("Remove from favorites" if is_favorited else "Add to favorites")
                 
                 tile.card_shell = card
                 tile.row_scroll = row_scroll
@@ -4689,27 +4779,40 @@ class LauncherWindow(QMainWindow):
     def get_categorized_entries(self):
         native_entries = []
         web_entries = []
+        favorites = self.config.get("favorites", [])
 
-        for app in self.config.get("native_apps", []):
+        for idx, app in enumerate(self.config.get("native_apps", [])):
             if not is_installed(app.get("cmd", "")):
                 continue
             subtitle = app.get("cmd", "").split()[0] if app.get("cmd") else "Application"
+            app_id = self.get_app_id(app)
+            is_favorited = any(f.get("id") == app_id and f.get("kind") == "native" for f in favorites)
             native_entries.append({
                 "kind": "native",
                 "item": app,
                 "subtitle": subtitle,
                 "tooltip": app.get("cmd", ""),
+                "favorited": is_favorited,
+                "original_index": idx,
             })
 
-        for app in self.config.get("web_apps", []):
+        for idx, app in enumerate(self.config.get("web_apps", [])):
             url = app.get("url", "")
             subtitle = url.replace("https://", "").replace("http://", "")
+            app_id = self.get_app_id(app)
+            is_favorited = any(f.get("id") == app_id and f.get("kind") == "web" for f in favorites)
             web_entries.append({
                 "kind": "web",
                 "item": app,
                 "subtitle": subtitle,
                 "tooltip": url,
+                "favorited": is_favorited,
+                "original_index": idx,
             })
+        
+        # Sort entries: favorited first, then by original order
+        native_entries.sort(key=lambda x: (not x.get("favorited", False), x.get("original_index", 0)))
+        web_entries.sort(key=lambda x: (not x.get("favorited", False), x.get("original_index", 0)))
 
         categories = []
         if native_entries:
@@ -5051,6 +5154,93 @@ class LauncherWindow(QMainWindow):
         self.populate_tiles()
         if self.tiles:
             self.focus_first_tile()
+
+    def get_app_id(self, app):
+        """Get a unique identifier for an app."""
+        return app.get("id", app.get("name", "")).lower().replace(" ", "_")
+    
+    def is_app_favorited(self, app, kind):
+        """Check if an app is in the favorites list."""
+        favorites = self.config.get("favorites", [])
+        app_id = self.get_app_id(app)
+        for fav in favorites:
+            if fav.get("id") == app_id and fav.get("kind") == kind:
+                return True
+        return False
+    
+    def toggle_favorite(self, app, kind):
+        """Toggle an app's favorite status."""
+        favorites = self.config.get("favorites", [])
+        app_id = self.get_app_id(app)
+        
+        # Check if already favorited and remove if found
+        was_favorited = False
+        for i, fav in enumerate(favorites):
+            if fav.get("id") == app_id and fav.get("kind") == kind:
+                # Remove from favorites
+                favorites.pop(i)
+                was_favorited = True
+                break
+        
+        # Only add if it wasn't favorited before
+        if not was_favorited:
+            # Add to favorites
+            favorites.append({
+                "id": app_id,
+                "kind": kind,
+                "name": app.get("name", "")
+            })
+        
+        self.config["favorites"] = favorites
+        try:
+            save_config(self.config_path, self.config)
+            logging.info("%s %s from favorites", "Removed" if was_favorited else "Added", app.get("name", ""))
+        except Exception as exc:
+            logging.exception("Failed to save favorites")
+            QMessageBox.critical(self, "Save Failed", f"Could not save favorites:\n{exc}")
+            return
+        
+        # Refresh tiles to update order and button states
+        QTimer.singleShot(0, self.populate_tiles)
+    
+    def reorder_app(self, app, kind, direction, current_index, entries):
+        """Move an app left or right in the order."""
+        collection_name = "native_apps" if kind == "native" else "web_apps"
+        collection = self.config.get(collection_name, [])
+        
+        # Find the app in the config
+        app_id = self.get_app_id(app)
+        config_index = -1
+        for i, item in enumerate(collection):
+            if self.get_app_id(item) == app_id:
+                config_index = i
+                break
+        
+        if config_index == -1:
+            return
+        
+        # Calculate new index
+        if direction == "left" and config_index > 0:
+            new_index = config_index - 1
+        elif direction == "right" and config_index < len(collection) - 1:
+            new_index = config_index + 1
+        else:
+            return  # Can't move further
+        
+        # Swap in config
+        collection[config_index], collection[new_index] = collection[new_index], collection[config_index]
+        self.config[collection_name] = collection
+        
+        try:
+            save_config(self.config_path, self.config)
+            logging.info("Moved %s %s", app.get("name", ""), direction)
+        except Exception as exc:
+            logging.exception("Failed to save config")
+            QMessageBox.critical(self, "Save Failed", f"Could not save config:\n{exc}")
+            return
+        
+        # Refresh tiles immediately
+        QTimer.singleShot(0, self.populate_tiles)
 
     def open_remote_settings(self):
         auth = self.config.get("auth", {})
