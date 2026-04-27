@@ -93,6 +93,7 @@ def _load_qt_binding():
                 qt_widgets.QLabel,
                 qt_widgets.QLineEdit,
                 qt_widgets.QMainWindow,
+                qt_widgets.QMenu,
                 qt_widgets.QMessageBox,
                 qt_widgets.QPushButton,
                 qt_widgets.QSizePolicy,
@@ -138,6 +139,7 @@ def _load_qt_binding():
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -3422,7 +3424,6 @@ class SettingsDialog(QDialog):
         username_text="",
         auto_launch=None,
         app_options=None,
-        update_callback=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -3434,7 +3435,6 @@ class SettingsDialog(QDialog):
 
         auto_launch = auto_launch or {}
         app_options = app_options or []
-        self.update_callback = update_callback
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
@@ -3453,7 +3453,6 @@ class SettingsDialog(QDialog):
         for section_id, label in (
             ("auto", "Auto Open"),
             ("remote", "Remote Login"),
-            ("update", "Update"),
         ):
             button = QPushButton(label)
             button.setProperty("tileVariant", "dialogSecondary")
@@ -3553,36 +3552,9 @@ class SettingsDialog(QDialog):
         helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
         remote_layout.addWidget(helper)
 
-        update_panel = QWidget()
-        update_layout = QVBoxLayout(update_panel)
-        update_layout.setContentsMargins(0, 0, 0, 0)
-        update_layout.setSpacing(metrics["dialog_spacing"])
-
-        update_title = QLabel("Update LinuxTV")
-        update_title.setObjectName("dialogSection")
-        update_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
-        update_layout.addWidget(update_title)
-
-        update_subtitle = QLabel("Pull the latest LinuxTV changes from GitHub and sync them into this device.")
-        update_subtitle.setObjectName("dialogSubtitle")
-        update_subtitle.setWordWrap(True)
-        update_subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
-        update_layout.addWidget(update_subtitle)
-
-        update_button = QPushButton("Update From GitHub")
-        update_button.setProperty("tileVariant", "accent")
-        update_button.clicked.connect(self.run_update_action)
-        update_layout.addWidget(update_button)
-
-        self.update_status_label = QLabel("")
-        self.update_status_label.setObjectName("dialogStatus")
-        self.update_status_label.setWordWrap(True)
-        update_layout.addWidget(self.update_status_label)
-
         for section_id, panel in (
             ("auto", auto_panel),
             ("remote", remote_panel),
-            ("update", update_panel),
         ):
             self.section_panels[section_id] = panel
             self.content_layout.addWidget(panel)
@@ -3627,13 +3599,6 @@ class SettingsDialog(QDialog):
             button.setProperty("tileVariant", "accent" if key == section_id else "dialogSecondary")
             button.style().unpolish(button)
             button.style().polish(button)
-
-    def run_update_action(self):
-        if not self.update_callback:
-            self.update_status_label.setText("Updater is not available on this system.")
-            return
-        success, message = self.update_callback()
-        self.update_status_label.setText(message)
 
     def values(self):
         selected_kind, selected_target = self.auto_launch_combo.currentData()
@@ -3924,7 +3889,7 @@ class LauncherWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to restart: {e}")
 
     def update_system(self):
-        """Update the system"""
+        """Update the system packages"""
         try:
             success, message = request_system_update()
             if success:
@@ -3932,8 +3897,20 @@ class LauncherWindow(QMainWindow):
             else:
                 QMessageBox.critical(self, "Error", message)
         except Exception as e:
-            logging.error(f"Failed to update: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to update: {e}")
+            logging.error(f"Failed to update system: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to update system: {e}")
+
+    def update_app(self):
+        """Update LinuxTV app from GitHub"""
+        try:
+            success, message = self.update_from_github()
+            if success:
+                QMessageBox.information(self, "App Update", message)
+            else:
+                QMessageBox.critical(self, "Error", message)
+        except Exception as e:
+            logging.error(f"Failed to update app: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to update app: {e}")
 
     def setup_ui(self):
         self.ui_metrics = self.compute_ui_metrics()
@@ -4087,7 +4064,7 @@ class LauncherWindow(QMainWindow):
         restart_button.clicked.connect(self.restart_system)
         hero_top_row.addWidget(restart_button)
 
-        # Update button
+        # Update button with menu
         update_button = QToolButton()
         update_button.setObjectName("updateButton")
         update_icon_path = resource_path("icons/update.png")
@@ -4095,10 +4072,39 @@ class LauncherWindow(QMainWindow):
             white_icon = create_white_icon(str(update_icon_path), self.ui_metrics["settings_button_size"] - 8)
             update_button.setIcon(white_icon)
             update_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
-        update_button.setToolTip("Update System")
+        update_button.setToolTip("Updates")
         update_button.setCursor(Qt.PointingHandCursor)
         update_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        update_button.clicked.connect(self.update_system)
+        update_button.setPopupMode(QToolButton.InstantPopup)
+        
+        # Create update menu
+        update_menu = QMenu(self)
+        update_menu.setStyleSheet("""
+            QMenu {
+                background-color: #1a2332;
+                color: #edf2f7;
+                border: 1px solid #2b3641;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QMenu::item {
+                padding: 10px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #33c3a0;
+                color: #09110f;
+            }
+        """)
+        
+        system_update_action = update_menu.addAction("🖥️  System Update")
+        system_update_action.triggered.connect(self.update_system)
+        
+        app_update_action = update_menu.addAction("📱  App Update")
+        app_update_action.triggered.connect(self.update_app)
+        
+        update_button.setMenu(update_menu)
         hero_top_row.addWidget(update_button)
 
         settings_button = QToolButton()
@@ -5249,7 +5255,6 @@ class LauncherWindow(QMainWindow):
             auth.get("username", ""),
             auto_launch,
             self.get_auto_launch_options(),
-            self.update_from_github,
             self,
         )
         if dialog.exec() != QDialog.Accepted:
