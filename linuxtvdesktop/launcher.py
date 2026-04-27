@@ -85,6 +85,7 @@ def _load_qt_binding():
                 qt_widgets.QApplication,
                 qt_widgets.QComboBox,
                 qt_widgets.QDialog,
+                qt_widgets.QFrame,
                 qt_widgets.QGraphicsDropShadowEffect,
                 qt_widgets.QGraphicsOpacityEffect,
                 qt_widgets.QGridLayout,
@@ -129,6 +130,7 @@ def _load_qt_binding():
     QApplication,
     QComboBox,
     QDialog,
+    QFrame,
     QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QGridLayout,
@@ -232,24 +234,24 @@ def dialog_metrics():
             "compact": True,
             "add_width": 520,
             "confirm_width": 460,
-            "settings_width": 920,
-            "settings_height": 650,
-            "dialog_margin_x": 24,
-            "dialog_margin_y": 22,
-            "dialog_spacing": 14,
-            "title_font": 22,
-            "section_font": 17,
-            "subtitle_font": 13,
+            "settings_width": 980,
+            "settings_height": 680,
+            "dialog_margin_x": 28,
+            "dialog_margin_y": 26,
+            "dialog_spacing": 16,
+            "title_font": 24,
+            "section_font": 18,
+            "subtitle_font": 14,
             "helper_font": 12,
-            "input_min_height": 42,
+            "input_min_height": 46,
             "nav_spacing": 12,
-            "status_padding_v": 11,
-            "status_padding_h": 14,
+            "status_padding_v": 12,
+            "status_padding_h": 16,
             "field_font_css": 14,
             "button_font_css": 14,
-            "button_min_width": 104,
-            "button_padding_v": 12,
-            "button_padding_h": 18,
+            "button_min_width": 110,
+            "button_padding_v": 13,
+            "button_padding_h": 20,
         }
     return {
         "compact": False,
@@ -257,17 +259,17 @@ def dialog_metrics():
         "confirm_width": 540,
         "settings_width": 1080,
         "settings_height": 740,
-        "dialog_margin_x": 30,
-        "dialog_margin_y": 26,
-        "dialog_spacing": 16,
-        "title_font": 26,
+        "dialog_margin_x": 32,
+        "dialog_margin_y": 30,
+        "dialog_spacing": 18,
+        "title_font": 28,
         "section_font": 20,
         "subtitle_font": 15,
         "helper_font": 14,
-        "input_min_height": 48,
+        "input_min_height": 50,
         "nav_spacing": 14,
-        "status_padding_v": 13,
-        "status_padding_h": 16,
+        "status_padding_v": 14,
+        "status_padding_h": 18,
         "field_font_css": 16,
         "button_font_css": 16,
         "button_min_width": 120,
@@ -281,122 +283,143 @@ def dialog_stylesheet(metrics=None):
     stylesheet = """
         QDialog {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 rgba(22, 27, 34, 0.98), stop:1 rgba(13, 17, 23, 0.99));
-            border: 1px solid rgba(76, 83, 91, 0.5);
-            border-radius: 24px;
+                stop:0 rgba(24, 30, 38, 0.98), stop:1 rgba(16, 20, 26, 0.99));
+            border: 2px solid rgba(88, 96, 105, 0.4);
+            border-radius: 28px;
         }
         QLabel#dialogTitle {
-            color: #f0f3f6;
+            color: #f6f8fa;
+            padding-bottom: 4px;
         }
         QLabel#dialogSection {
-            color: #e6edf3;
-            padding-top: 10px;
+            color: #eef1f5;
+            padding-top: 12px;
+            padding-bottom: 2px;
             font-weight: 700;
+            letter-spacing: 0.3px;
         }
         QLabel#dialogSubtitle {
-            color: #8b949e;
+            color: #9aa3af;
+            padding-bottom: 6px;
         }
         QLabel#dialogFieldLabel {
-            color: #c9d1d9;
+            color: #d1d5de;
             font-weight: 600;
-            padding-top: 6px;
+            padding-top: 8px;
+            padding-bottom: 4px;
         }
         QLabel#dialogHelper {
-            color: #6e7681;
-            padding-top: 4px;
+            color: #7a8290;
+            padding-top: 6px;
         }
         QLabel#dialogStatus {
-            color: #b7c4d1;
-            background-color: rgba(22, 27, 34, 0.8);
-            border: 1px solid rgba(76, 83, 91, 0.4);
-            border-radius: 14px;
+            color: #c5d0dc;
+            background-color: rgba(26, 32, 40, 0.85);
+            border: 1px solid rgba(88, 96, 105, 0.35);
+            border-radius: 16px;
             padding: __STATUS_PADDING_V__px __STATUS_PADDING_H__px;
         }
         QLineEdit, QComboBox {
-            background-color: rgba(13, 17, 23, 0.9);
-            color: #e6edf3;
-            border: 1px solid rgba(76, 83, 91, 0.5);
-            border-radius: 16px;
-            padding: __BUTTON_PADDING_V__px 16px;
-            min-height: 24px;
+            background-color: rgba(18, 23, 30, 0.92);
+            color: #e8ecf1;
+            border: 2px solid rgba(88, 96, 105, 0.45);
+            border-radius: 18px;
+            padding: __BUTTON_PADDING_V__px 18px;
+            min-height: 26px;
             font-size: __FIELD_FONT__px;
+            selection-background-color: #58a6ff;
+            selection-color: #ffffff;
         }
         QLineEdit:focus, QComboBox:focus {
-            border: 1px solid #58a6ff;
+            border: 2px solid #58a6ff;
+            background-color: rgba(22, 28, 36, 0.95);
+        }
+        QLineEdit:hover, QComboBox:hover {
+            border: 2px solid rgba(88, 166, 255, 0.5);
         }
         QComboBox::drop-down {
             border: none;
-            width: 28px;
+            width: 32px;
+        }
+        QComboBox::down-arrow {
+            width: 12px;
+            height: 12px;
         }
         QComboBox QAbstractItemView {
-            background-color: rgba(22, 27, 34, 0.98);
-            color: #e6edf3;
-            border: 1px solid rgba(76, 83, 91, 0.5);
+            background-color: rgba(24, 30, 38, 0.98);
+            color: #e8ecf1;
+            border: 2px solid rgba(88, 96, 105, 0.45);
+            border-radius: 12px;
             selection-background-color: #58a6ff;
             selection-color: #ffffff;
-            alternate-background-color: rgba(19, 24, 30, 0.95);
+            alternate-background-color: rgba(22, 28, 34, 0.95);
+            padding: 4px;
         }
         QComboBox QAbstractItemView::item {
-            background-color: rgba(22, 27, 34, 0.95);
-            color: #e6edf3;
-            padding: 8px 10px;
+            background-color: rgba(24, 30, 38, 0.95);
+            color: #e8ecf1;
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin: 2px;
         }
         QComboBox QAbstractItemView::item:selected {
             background-color: #58a6ff;
             color: #ffffff;
         }
         QComboBox QAbstractItemView::item:hover {
-            background-color: rgba(48, 54, 61, 0.9);
-            color: #e6edf3;
+            background-color: rgba(56, 64, 74, 0.9);
+            color: #e8ecf1;
         }
         QComboBox QLineEdit {
-            background-color: rgba(13, 17, 23, 0.9);
-            color: #e6edf3;
+            background-color: transparent;
+            color: #e8ecf1;
             border: none;
             selection-background-color: #58a6ff;
             selection-color: #ffffff;
         }
         QPushButton[tileVariant="dialogSecondary"] {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 rgba(48, 54, 61, 0.9), stop:1 rgba(38, 43, 50, 0.95));
-            color: #c9d1d9;
-            border: 1px solid rgba(76, 83, 91, 0.5);
-            border-radius: 16px;
+                stop:0 rgba(52, 60, 68, 0.92), stop:1 rgba(44, 51, 58, 0.95));
+            color: #d4dae2;
+            border: 2px solid rgba(88, 96, 105, 0.45);
+            border-radius: 18px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
             font-weight: 600;
         }
         QPushButton[tileVariant="dialogSecondary"][sectionNav="true"] {
-            padding: 12px 20px;
-            min-width: 130px;
+            padding: 14px 22px;
+            min-width: 140px;
         }
         QPushButton[tileVariant="dialogSecondary"]:hover {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 rgba(58, 64, 71, 0.95), stop:1 rgba(48, 54, 61, 0.95));
-            border: 1px solid rgba(88, 96, 105, 0.7);
+                stop:0 rgba(62, 70, 78, 0.95), stop:1 rgba(54, 62, 70, 0.95));
+            border: 2px solid rgba(100, 110, 120, 0.6);
+            color: #e8ecf1;
         }
         QPushButton[tileVariant="dialogSecondary"][sectionNav="true"]:hover {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #58a6ff, stop:1 #1f6feb);
-            border: 1px solid #58a6ff;
+                stop:0 #58a6ff, stop:1 #2178f0);
+            border: 2px solid #58a6ff;
             color: #ffffff;
         }
         QPushButton[tileVariant="dialogSecondary"]:focus {
             border: 2px solid #58a6ff;
+            outline: none;
         }
         QPushButton[tileVariant="dialogSecondary"][sectionNav="true"]:focus {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 rgba(31, 111, 235, 0.3), stop:1 rgba(22, 87, 183, 0.35));
+                stop:0 rgba(36, 116, 240, 0.35), stop:1 rgba(26, 92, 196, 0.4));
             border: 2px solid #58a6ff;
             color: #ffffff;
         }
         QPushButton[tileVariant="accent"] {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #238636, stop:1 #1a7f37);
+                stop:0 #28943e, stop:1 #1f8532);
             color: #ffffff;
-            border: 1px solid #2ea043;
-            border-radius: 16px;
+            border: 2px solid #32a846;
+            border-radius: 18px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
@@ -404,15 +427,19 @@ def dialog_stylesheet(metrics=None):
         }
         QPushButton[tileVariant="accent"]:hover {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #2ea043, stop:1 #238636);
-            border: 1px solid #3fb950;
+                stop:0 #32a846, stop:1 #28943e);
+            border: 2px solid #3fb950;
+        }
+        QPushButton[tileVariant="accent"]:focus {
+            border: 2px solid #58a6ff;
+            outline: none;
         }
         QPushButton[tileVariant="danger"] {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #da3633, stop:1 #b62324);
+                stop:0 #e03e3a, stop:1 #c42e2a);
             color: #ffffff;
-            border: 1px solid #f85149;
-            border-radius: 16px;
+            border: 2px solid #f04e45;
+            border-radius: 18px;
             padding: __BUTTON_PADDING_V__px __BUTTON_PADDING_H__px;
             min-width: __BUTTON_MIN_WIDTH__px;
             font-size: __BUTTON_FONT__px;
@@ -420,8 +447,36 @@ def dialog_stylesheet(metrics=None):
         }
         QPushButton[tileVariant="danger"]:hover {
             background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #f85149, stop:1 #da3633);
-            border: 1px solid #f85149;
+                stop:0 #f04e45, stop:1 #e03e3a);
+            border: 2px solid #ff6b63;
+        }
+        QPushButton[tileVariant="danger"]:focus {
+            border: 2px solid #58a6ff;
+            outline: none;
+        }
+        QSlider::groove:horizontal {
+            background: rgba(52, 60, 68, 0.6);
+            border: 1px solid rgba(88, 96, 105, 0.4);
+            height: 8px;
+            border-radius: 4px;
+        }
+        QSlider::handle:horizontal {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #58a6ff, stop:1 #2178f0);
+            border: 2px solid #ffffff;
+            width: 22px;
+            height: 22px;
+            margin: -8px 0;
+            border-radius: 11px;
+        }
+        QSlider::handle:horizontal:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #68b6ff, stop:1 #3188ff);
+        }
+        QSlider::sub-page:horizontal {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #58a6ff, stop:1 #2178f0);
+            border-radius: 4px;
         }
     """
     replacements = {
@@ -2435,6 +2490,7 @@ class NetworkDialog(QDialog):
         current_wifi="",
         wifi_refresh_callback=None,
         wifi_connect_callback=None,
+        wifi_remove_callback=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -2447,8 +2503,10 @@ class NetworkDialog(QDialog):
         wifi_networks = wifi_networks or []
         self.wifi_refresh_callback = wifi_refresh_callback
         self.wifi_connect_callback = wifi_connect_callback
+        self.wifi_remove_callback = wifi_remove_callback
         self._wifi_scan_in_progress = False
         self._wifi_has_loaded = bool(wifi_networks or current_wifi)
+        self._wifi_last_scan_time = 0.0
         self.wifi_scan_finished.connect(self.handle_wifi_scan_finished)
 
         layout = QVBoxLayout(self)
@@ -2459,6 +2517,12 @@ class NetworkDialog(QDialog):
         title.setObjectName("dialogTitle")
         title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
+
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(separator)
 
         wifi_panel = QWidget()
         wifi_layout = QVBoxLayout(wifi_panel)
@@ -2495,6 +2559,11 @@ class NetworkDialog(QDialog):
         self.refresh_wifi_button.clicked.connect(self.refresh_wifi_networks)
         wifi_button_row.addWidget(self.refresh_wifi_button)
 
+        self.forget_wifi_button = QPushButton("Forget Network")
+        self.forget_wifi_button.setProperty("tileVariant", "dialogSecondary")
+        self.forget_wifi_button.clicked.connect(self.forget_wifi)
+        wifi_button_row.addWidget(self.forget_wifi_button)
+
         self.connect_wifi_button = QPushButton("Connect Wi-Fi")
         self.connect_wifi_button.setProperty("tileVariant", "accent")
         self.connect_wifi_button.clicked.connect(self.connect_wifi)
@@ -2507,6 +2576,12 @@ class NetworkDialog(QDialog):
         wifi_layout.addWidget(self.wifi_status_label)
 
         layout.addWidget(wifi_panel, 1)
+
+        # Bottom separator and button row
+        bottom_separator = QFrame()
+        bottom_separator.setFrameShape(QFrame.HLine)
+        bottom_separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(bottom_separator)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -2541,6 +2616,7 @@ class NetworkDialog(QDialog):
         self._wifi_scan_in_progress = loading
         self.refresh_wifi_button.setEnabled(not loading and bool(self.wifi_refresh_callback))
         self.connect_wifi_button.setEnabled(not loading and bool(self.wifi_connect_callback))
+        self.forget_wifi_button.setEnabled(not loading and bool(self.wifi_remove_callback))
         if loading and message:
             self.wifi_status_label.setText(message)
 
@@ -2551,7 +2627,10 @@ class NetworkDialog(QDialog):
             return
         if self._wifi_scan_in_progress:
             return
-        if self._wifi_has_loaded and not force:
+        # Check if cache is still valid (2 minutes)
+        import time
+        cache_valid = self._wifi_has_loaded and (time.time() - self._wifi_last_scan_time < 120)
+        if cache_valid and not force:
             return
         status_text = "Refreshing Wi-Fi networks..." if force else "Fetching nearby Wi-Fi networks..."
         self.set_wifi_loading_state(True, status_text)
@@ -2572,6 +2651,8 @@ class NetworkDialog(QDialog):
     def handle_wifi_scan_finished(self, wifi_networks, current_wifi, message):
         self.set_wifi_loading_state(False)
         self._wifi_has_loaded = True
+        import time
+        self._wifi_last_scan_time = time.time()
         self.set_wifi_networks(wifi_networks or [], current_wifi)
         if message:
             self.wifi_status_label.setText(message)
@@ -2627,6 +2708,28 @@ class NetworkDialog(QDialog):
         if success:
             self.wifi_password_input.clear()
 
+    def forget_wifi(self):
+        # Forget/remove a Wi-Fi network.
+        if self._wifi_scan_in_progress:
+            self.wifi_status_label.setText("Still fetching nearby Wi-Fi networks. Try again in a moment.")
+            return
+        if not self.wifi_remove_callback:
+            self.wifi_status_label.setText("Wi-Fi network removal is not available on this system.")
+            return
+        selected_network = self.wifi_combo.currentData()
+        if not isinstance(selected_network, dict):
+            selected_network = {"ssid": self.wifi_combo.currentText().strip(), "security": ""}
+        
+        ssid = selected_network.get("ssid", "").strip()
+        if not ssid:
+            self.wifi_status_label.setText("Select a network to forget.")
+            return
+        
+        success, message = self.wifi_remove_callback(selected_network)
+        if success:
+            self.refresh_wifi_networks()
+        self.wifi_status_label.setText(message)
+
 
 class BluetoothDialog(QDialog):
     bluetooth_scan_finished = Signal(object, str, str)
@@ -2653,6 +2756,7 @@ class BluetoothDialog(QDialog):
         self.bluetooth_remove_callback = bluetooth_remove_callback
         self._bluetooth_scan_in_progress = False
         self._bluetooth_has_loaded = bool(bluetooth_devices or current_bluetooth)
+        self._bluetooth_last_scan_time = 0.0
         self.bluetooth_scan_finished.connect(self.handle_bluetooth_scan_finished)
 
         layout = QVBoxLayout(self)
@@ -2663,6 +2767,12 @@ class BluetoothDialog(QDialog):
         title.setObjectName("dialogTitle")
         title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
+
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(separator)
 
         bluetooth_panel = QWidget()
         bluetooth_layout = QVBoxLayout(bluetooth_panel)
@@ -2711,6 +2821,12 @@ class BluetoothDialog(QDialog):
 
         layout.addWidget(bluetooth_panel, 1)
 
+        # Bottom separator and button row
+        bottom_separator = QFrame()
+        bottom_separator.setFrameShape(QFrame.HLine)
+        bottom_separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(bottom_separator)
+
         button_row = QHBoxLayout()
         button_row.addStretch(1)
 
@@ -2755,7 +2871,10 @@ class BluetoothDialog(QDialog):
             return
         if self._bluetooth_scan_in_progress:
             return
-        if self._bluetooth_has_loaded and not force:
+        # Check if cache is still valid (2 minutes)
+        import time
+        cache_valid = self._bluetooth_has_loaded and (time.time() - self._bluetooth_last_scan_time < 120)
+        if cache_valid and not force:
             return
         status_text = "Refreshing Bluetooth devices..." if force else "Fetching nearby Bluetooth devices..."
         self.set_bluetooth_loading_state(True, status_text)
@@ -2776,6 +2895,8 @@ class BluetoothDialog(QDialog):
     def handle_bluetooth_scan_finished(self, bluetooth_devices, current_bluetooth, message):
         self.set_bluetooth_loading_state(False)
         self._bluetooth_has_loaded = True
+        import time
+        self._bluetooth_last_scan_time = time.time()
         self.set_bluetooth_devices(bluetooth_devices or [], current_bluetooth)
         if message:
             self.bluetooth_status_label.setText(message)
@@ -2873,6 +2994,12 @@ class SoundDialog(QDialog):
         title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
 
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(separator)
+
         sound_panel = QWidget()
         sound_layout = QVBoxLayout(sound_panel)
         sound_layout.setContentsMargins(0, 0, 0, 0)
@@ -2912,6 +3039,12 @@ class SoundDialog(QDialog):
         sound_layout.addWidget(self.speaker_status_label)
 
         layout.addWidget(sound_panel, 1)
+
+        # Bottom separator and button row
+        bottom_separator = QFrame()
+        bottom_separator.setFrameShape(QFrame.HLine)
+        bottom_separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(bottom_separator)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -3145,6 +3278,12 @@ class BrightnessDialog(QDialog):
         title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
         layout.addWidget(title)
 
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(separator)
+
         brightness_panel = QWidget()
         brightness_layout = QVBoxLayout(brightness_panel)
         brightness_layout.setContentsMargins(0, 0, 0, 0)
@@ -3207,6 +3346,12 @@ class BrightnessDialog(QDialog):
         brightness_layout.addWidget(self.brightness_status_label)
 
         layout.addWidget(brightness_panel, 1)
+
+        # Bottom separator and button row
+        bottom_separator = QFrame()
+        bottom_separator.setFrameShape(QFrame.HLine)
+        bottom_separator.setStyleSheet("background-color: rgba(88, 96, 105, 0.3); border: none;")
+        layout.addWidget(bottom_separator)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -4980,6 +5125,7 @@ class LauncherWindow(QMainWindow):
             "",
             self.scan_wifi_networks,
             self.connect_to_wifi,
+            self.disconnect_from_wifi,
             self,
         )
         dialog.exec()
@@ -5265,6 +5411,48 @@ class LauncherWindow(QMainWindow):
             return False, f"Could not connect to {ssid}: {message}", ""
 
         return True, f"Connected to {ssid}.", ssid
+
+    def disconnect_from_wifi(self, network_info):
+        # Disconnect and forget a Wi-Fi network.
+        if isinstance(network_info, dict):
+            ssid = str(network_info.get("ssid", "")).strip()
+        else:
+            ssid = str(network_info or "").strip()
+        if not ssid:
+            return False, "Enter or choose a Wi-Fi network name first."
+
+        nmcli = shutil.which("nmcli")
+        if not nmcli:
+            return False, "NetworkManager tools are not installed on this device."
+            
+        try:
+            # First disconnect if currently connected
+            subprocess.run(
+                [nmcli, "device", "disconnect", ssid],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            
+            # Then delete the connection profile to forget it
+            result = subprocess.run(
+                [nmcli, "connection", "delete", ssid],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            
+            if result.returncode == 0:
+                return True, f"Forgot network {ssid}."
+            else:
+                message = (result.stderr or result.stdout or "Unknown error").strip()
+                return False, f"Could not forget {ssid}: {message}"
+                
+        except Exception as exc:
+            logging.exception("Failed to forget Wi-Fi network")
+            return False, f"Could not forget {ssid}: {exc}"
 
     def scan_bluetooth_devices(self):
         bluetoothctl = shutil.which("bluetoothctl")
