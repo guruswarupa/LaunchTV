@@ -60,3 +60,10 @@ native_apps:
   - name: "Proton VPN"
     cmd: "protonvpn-app"
     icon: "icons/protonvpn.png"
+websocket:
+  host: "0.0.0.0"
+  port: 8765
+  # To enable WSS (WebSocket Secure), provide paths to SSL certificate and key:
+  # ssl_cert: "/path/to/cert.pem"
+  # ssl_key: "/path/to/key.pem"
+  # Leave empty to use unencrypted WS (not recommended for production)

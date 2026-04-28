@@ -102,6 +102,8 @@ def _load_qt_binding():
                 qt_widgets.QToolButton,
                 qt_widgets.QVBoxLayout,
                 qt_widgets.QWidget,
+                qt_gui.QDrag,
+                qt_core.QMimeData,
             )
         except ImportError:
             continue
@@ -148,6 +150,8 @@ def _load_qt_binding():
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QDrag,
+    QMimeData,
 ) = _load_qt_binding()
 
 APP_NAME = "LinuxTV"
@@ -173,6 +177,8 @@ DEFAULT_CONFIG = {
     "websocket": {
         "host": "0.0.0.0",
         "port": 8765,
+        "ssl_cert": "",  # Path to SSL certificate file
+        "ssl_key": "",   # Path to SSL private key file
     },
     "auto_launch": {
         "app_kind": "",
@@ -1328,6 +1334,31 @@ def request_system_update():
         return False, f"Failed to start update: {e}"
 
 
+def generate_self_signed_cert(cert_path, key_path):
+    """Generate a self-signed SSL certificate for WSS"""
+    try:
+        openssl = shutil.which("openssl")
+        if not openssl:
+            logging.warning("openssl not found, cannot generate self-signed certificate")
+            return False, "openssl not found"
+        
+        # Generate self-signed certificate
+        subprocess.run([
+            openssl, "req", "-x509", "-newkey", "rsa:4096",
+            "-keyout", str(key_path),
+            "-out", str(cert_path),
+            "-days", "3650",
+            "-nodes",
+            "-subj", "/C=US/ST=State/L=City/O=LinuxTV/CN=linuxtv.local"
+        ], check=True, capture_output=True)
+        
+        logging.info("Generated self-signed SSL certificate: %s", cert_path)
+        return True, "Certificate generated successfully"
+    except Exception as e:
+        logging.exception("Failed to generate self-signed certificate")
+        return False, f"Failed to generate certificate: {e}"
+
+
 class InputDeviceGrabber(threading.Thread):
     """Captures input events from remote control devices system-wide using evdev."""
     
@@ -1477,13 +1508,21 @@ class InputDeviceGrabber(threading.Thread):
 
 
 class WebSocketControlServer(threading.Thread):
-    def __init__(self, window, host=None, port=8765):
+    def __init__(self, window, host=None, port=None, ssl_cert=None, ssl_key=None):
         super().__init__(daemon=True)
         self.window = window
         # Default to 0.0.0.0 to allow remote connections, allow override via config
-        config_host = window.config.get("websocket", {}).get("host", "0.0.0.0")
+        ws_config = window.config.get("websocket", {})
+        config_host = ws_config.get("host", "0.0.0.0")
+        config_port = ws_config.get("port", 8765)
         self.host = host if host is not None else config_host
-        self.port = port
+        self.port = port if port is not None else config_port
+        
+        # SSL/TLS configuration
+        self.ssl_cert = ssl_cert or ws_config.get("ssl_cert")
+        self.ssl_key = ssl_key or ws_config.get("ssl_key")
+        self.use_ssl = bool(self.ssl_cert and self.ssl_key)
+        
         self.loop = None
         self.server = None
         self._stop_event = threading.Event()
@@ -2022,8 +2061,33 @@ class WebSocketControlServer(threading.Thread):
         if websockets is None:
             logging.error("websockets library not installed; remote control disabled")
             return
-        self.server = await websockets.serve(self.handler, self.host, self.port)
-        logging.info("WebSocket remote server started on ws://%s:%s", self.host, self.port)
+        
+        # Configure SSL if certificates are provided
+        ssl_context = None
+        if self.use_ssl:
+            try:
+                import ssl
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ssl_context.load_cert_chain(self.ssl_cert, self.ssl_key)
+                # Use modern TLS settings
+                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                ssl_context.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20')
+                logging.info("WebSocket server will use WSS (TLS encrypted)")
+            except Exception as e:
+                logging.error("Failed to load SSL certificates: %s", e)
+                logging.warning("Falling back to unencrypted WS")
+                self.use_ssl = False
+                ssl_context = None
+        
+        self.server = await websockets.serve(
+            self.handler, 
+            self.host, 
+            self.port,
+            ssl=ssl_context
+        )
+        
+        protocol = "wss" if self.use_ssl else "ws"
+        logging.info("WebSocket remote server started on %s://%s:%s", protocol, self.host, self.port)
         try:
             await self.server.wait_closed()
         except asyncio.CancelledError:
@@ -2216,8 +2280,31 @@ class TileButton(QPushButton):
         self.animate_focus(False)
 
 
+class DropRowWidget(QWidget):
+    """Custom widget that accepts drops and forwards to parent handler"""
+    def __init__(self, parent_handler=None, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.parent_handler = parent_handler
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+    
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+    
+    def dropEvent(self, event):
+        if event.mimeData().hasText() and self.parent_handler:
+            event.acceptProposedAction()
+            self.parent_handler(event)
+
+
 class AppCard(QWidget):
-    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, favorite_callback=None, reorder_callback=None, show_actions: bool = True, metrics=None):
+    _drag_source = None  # Class variable to track current drag source
+    
+    def __init__(self, tile_button: TileButton, edit_callback=None, delete_callback=None, favorite_callback=None, reorder_callback=None, show_actions: bool = True, metrics=None, app_data=None, kind=None):
         super().__init__()
         metrics = metrics or {}
         action_button_size = int(metrics.get("action_button_size", 44))
@@ -2225,6 +2312,10 @@ class AppCard(QWidget):
         self.setObjectName("appCardShell")
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setFixedSize(tile_button.shell_size)
+        
+        # Store app data for drag-and-drop
+        self.app_data = app_data
+        self.kind = kind
 
         # Add material design drop shadow
         self.shadow_effect = QGraphicsDropShadowEffect(self)
@@ -2241,8 +2332,6 @@ class AppCard(QWidget):
         self.edit_button = None
         self.delete_button = None
         self.favorite_button = None
-        self.move_left_button = None
-        self.move_right_button = None
         if show_actions:
             self.favorite_button = QToolButton(self)
             self.favorite_button.setObjectName("favoriteButton")
@@ -2252,24 +2341,6 @@ class AppCard(QWidget):
             self.favorite_button.setCursor(Qt.PointingHandCursor)
             self.favorite_button.setFocusPolicy(Qt.NoFocus)
             self.favorite_button.setFixedSize(action_button_size, action_button_size)
-            
-            self.move_left_button = QToolButton(self)
-            self.move_left_button.setObjectName("reorderButton")
-            self.move_left_button.setText("◀")
-            self.move_left_button.setToolTip("Move left")
-            self.move_left_button.clicked.connect(lambda: reorder_callback("left"))
-            self.move_left_button.setCursor(Qt.PointingHandCursor)
-            self.move_left_button.setFocusPolicy(Qt.NoFocus)
-            self.move_left_button.setFixedSize(action_button_size, action_button_size)
-            
-            self.move_right_button = QToolButton(self)
-            self.move_right_button.setObjectName("reorderButton")
-            self.move_right_button.setText("▶")
-            self.move_right_button.setToolTip("Move right")
-            self.move_right_button.clicked.connect(lambda: reorder_callback("right"))
-            self.move_right_button.setCursor(Qt.PointingHandCursor)
-            self.move_right_button.setFocusPolicy(Qt.NoFocus)
-            self.move_right_button.setFixedSize(action_button_size, action_button_size)
             
             self.edit_button = QToolButton(self)
             self.edit_button.setObjectName("editButton")
@@ -2289,6 +2360,12 @@ class AppCard(QWidget):
             self.delete_button.setFocusPolicy(Qt.NoFocus)
             self.delete_button.setFixedSize(action_button_size, action_button_size)
 
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+        self._is_dragging = False
+        self._drag_start_pos = None
+        self._drag_source = None  # Track drag source
+
     def sizeHint(self):
         return self.tile_button.shell_size
 
@@ -2297,22 +2374,116 @@ class AppCard(QWidget):
 
     def resizeEvent(self, event):
         self.tile_button.update_geometry_targets(self.rect())
-        if self.favorite_button is not None and self.move_left_button is not None and self.move_right_button is not None and self.edit_button is not None and self.delete_button is not None:
+        if self.favorite_button is not None and self.edit_button is not None and self.delete_button is not None:
             # Align all buttons horizontally at the top right
             button_y = 12
             button_spacing = 6
             button_width = self.delete_button.width()
             
-            # Calculate total width needed for 5 buttons
-            total_buttons_width = 5 * button_width + 4 * button_spacing
+            # Calculate total width needed for 3 buttons
+            total_buttons_width = 3 * button_width + 2 * button_spacing
             
-            # Position from right to left: delete, edit, move_right, move_left, favorite
+            # Position from right to left: delete, edit, favorite
             self.delete_button.move(self.width() - button_width - 12, button_y)
             self.edit_button.move(self.width() - button_width - button_width - 12 - button_spacing, button_y)
-            self.move_right_button.move(self.width() - 2*button_width - button_width - 12 - 2*button_spacing, button_y)
-            self.move_left_button.move(self.width() - 3*button_width - button_width - 12 - 3*button_spacing, button_y)
-            self.favorite_button.move(self.width() - 4*button_width - button_width - 12 - 4*button_spacing, button_y)
+            self.favorite_button.move(self.width() - 2*button_width - button_width - 12 - 2*button_spacing, button_y)
         super().resizeEvent(event)
+
+    def mousePressEvent(self, event):
+        """Start drag on mouse press"""
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+            self._is_dragging = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Initiate drag operation"""
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if not self._drag_start_pos:
+            return
+            
+        # Check if mouse has moved far enough to start drag
+        if (event.pos() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            return
+            
+        # Don't start drag if clicking on buttons
+        for btn in [self.favorite_button, self.edit_button, self.delete_button]:
+            if btn and btn.geometry().contains(event.pos()):
+                return
+        
+        self._is_dragging = True
+        AppCard._drag_source = self  # Store as class variable
+        
+        # Create drag data with app info
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        # Store app info as JSON for reliable transfer
+        import json
+        app_info = {
+            "app_id": self.get_app_id(),
+            "kind": self.kind,
+            "source_id": str(id(self)),
+        }
+        mime_data.setText(json.dumps(app_info))
+        drag.setMimeData(mime_data)
+        
+        # Create drag pixmap (semi-transparent snapshot)
+        pixmap = self.grab()
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(event.pos())
+        
+        # Execute drag and get result
+        result = drag.exec_(Qt.MoveAction)
+        
+        # Reset drag state
+        self._is_dragging = False
+        self._drag_start_pos = None
+        AppCard._drag_source = None
+    
+    def get_app_id(self):
+        """Get unique identifier for the app in this card"""
+        if self.app_data:
+            if self.kind == "native":
+                return self.app_data.get("cmd", "")
+            else:
+                return self.app_data.get("url", "")
+        return ""
+
+    def dragEnterEvent(self, event):
+        """Accept drag events"""
+        if event.mimeData().hasText() and event.mimeData().text() == "app_card":
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        """Handle drag move"""
+        if event.mimeData().hasText() and event.mimeData().text() == "app_card":
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        """Handle drop - trigger reorder"""
+        import json
+        import logging
+        try:
+            data = json.loads(event.mimeData().text())
+            logging.info(f"Drop event received: {data}")
+            
+            if "app_id" in data and "kind" in data:
+                # Use the tracked drag source
+                source_card = AppCard._drag_source
+                if not source_card:
+                    logging.warning("No drag source tracked")
+                    return
+                
+                event.acceptProposedAction()
+                logging.info(f"Dropped on card: {self.app_data}, calling handler")
+                
+                # Notify parent to handle reorder
+                parent = self.parentWidget()
+                if parent and hasattr(parent, 'handle_card_drop'):
+                    parent.handle_card_drop(data, self.app_data, self.kind)
+        except (json.JSONDecodeError, KeyError) as e:
+            logging.error(f"Drop event error: {e}")
 
     def enterEvent(self, event):
         """Enhance shadow on hover"""
@@ -3418,17 +3589,93 @@ class BrightnessDialog(QDialog):
         self.brightness_slider.setValue(value)
 
 
-class SettingsDialog(QDialog):
+class RemoteLoginDialog(QDialog):
     def __init__(
         self,
         username_text="",
+        parent=None,
+    ):
+        super().__init__(parent)
+        metrics = dialog_metrics()
+        self.setWindowTitle("Remote Login Settings")
+        self.setModal(True)
+        self.setFixedWidth(metrics["settings_width"])
+        self.setFixedHeight(metrics["settings_height"])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2, metrics["dialog_margin_x"] + 2, metrics["dialog_margin_y"] + 2)
+        layout.setSpacing(metrics["dialog_spacing"])
+
+        title = QLabel("Remote Login")
+        title.setObjectName("dialogTitle")
+        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
+        layout.addWidget(title)
+
+        subtitle = QLabel("Set the phone credentials required to control LinuxTV remotely.")
+        subtitle.setObjectName("dialogSubtitle")
+        subtitle.setWordWrap(True)
+        subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
+        layout.addWidget(subtitle)
+
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Username")
+        self.username_input.setText(username_text)
+        self.username_input.setMinimumHeight(metrics["input_min_height"])
+        layout.addWidget(self.username_input)
+
+        self.password_input = QLineEdit()
+        self.password_input.setPlaceholderText("Password")
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.password_input.setMinimumHeight(metrics["input_min_height"])
+        layout.addWidget(self.password_input)
+
+        self.confirm_input = QLineEdit()
+        self.confirm_input.setPlaceholderText("Confirm password")
+        self.confirm_input.setEchoMode(QLineEdit.Password)
+        self.confirm_input.setMinimumHeight(metrics["input_min_height"])
+        layout.addWidget(self.confirm_input)
+
+        helper = QLabel("Leave all three fields empty to disable phone authentication.")
+        helper.setObjectName("dialogSubtitle")
+        helper.setWordWrap(True)
+        helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
+        layout.addWidget(helper)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setProperty("tileVariant", "dialogSecondary")
+        cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(cancel_button)
+
+        save_button = QPushButton("Save")
+        save_button.setProperty("tileVariant", "accent")
+        save_button.clicked.connect(self.accept)
+        button_row.addWidget(save_button)
+
+        layout.addLayout(button_row)
+
+        self.setStyleSheet(dialog_stylesheet(metrics))
+
+    def values(self):
+        return {
+            "username": self.username_input.text().strip(),
+            "password": self.password_input.text(),
+            "confirm_password": self.confirm_input.text(),
+        }
+
+
+class SettingsDialog(QDialog):
+    def __init__(
+        self,
         auto_launch=None,
         app_options=None,
         parent=None,
     ):
         super().__init__(parent)
         metrics = dialog_metrics()
-        self.setWindowTitle("LinuxTV Settings")
+        self.setWindowTitle("LinuxTV")
         self.setModal(True)
         self.setFixedWidth(metrics["settings_width"])
         self.setFixedHeight(metrics["settings_height"])
@@ -3441,34 +3688,6 @@ class SettingsDialog(QDialog):
         layout.setSpacing(metrics["dialog_spacing"])
         self.section_buttons = {}
         self.section_panels = {}
-
-        title = QLabel("Settings")
-        title.setObjectName("dialogTitle")
-        title.setFont(QFont("Sans Serif", metrics["title_font"], QFont.Bold))
-        layout.addWidget(title)
-
-        nav_row = QHBoxLayout()
-        nav_row.setSpacing(metrics["nav_spacing"])
-        nav_row.setContentsMargins(0, 8, 0, 8)
-        for section_id, label in (
-            ("auto", "Auto Open"),
-            ("remote", "Remote Login"),
-        ):
-            button = QPushButton(label)
-            button.setProperty("tileVariant", "dialogSecondary")
-            button.setProperty("sectionNav", "true")
-            button.setMinimumWidth(130)
-            button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            button.clicked.connect(lambda checked=False, current=section_id: self.show_section(current))
-            nav_row.addWidget(button)
-            self.section_buttons[section_id] = button
-        layout.addLayout(nav_row)
-
-        self.content_host = QWidget()
-        self.content_layout = QVBoxLayout(self.content_host)
-        self.content_layout.setContentsMargins(0, 6, 0, 0)
-        self.content_layout.setSpacing(0)
-        layout.addWidget(self.content_host, 1)
 
         auto_panel = QWidget()
         auto_layout = QVBoxLayout(auto_panel)
@@ -3512,52 +3731,7 @@ class SettingsDialog(QDialog):
         auto_helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
         auto_layout.addWidget(auto_helper)
 
-        remote_panel = QWidget()
-        remote_layout = QVBoxLayout(remote_panel)
-        remote_layout.setContentsMargins(0, 0, 0, 0)
-        remote_layout.setSpacing(metrics["dialog_spacing"])
-
-        remote_title = QLabel("Remote Login")
-        remote_title.setObjectName("dialogSection")
-        remote_title.setFont(QFont("Sans Serif", metrics["section_font"], QFont.Bold))
-        remote_layout.addWidget(remote_title)
-
-        subtitle = QLabel("Set the phone credentials required to control LinuxTV.")
-        subtitle.setObjectName("dialogSubtitle")
-        subtitle.setWordWrap(True)
-        subtitle.setFont(QFont("Sans Serif", metrics["subtitle_font"]))
-        remote_layout.addWidget(subtitle)
-
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Username")
-        self.username_input.setText(username_text)
-        self.username_input.setMinimumHeight(metrics["input_min_height"])
-        remote_layout.addWidget(self.username_input)
-
-        self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Password")
-        self.password_input.setEchoMode(QLineEdit.Password)
-        self.password_input.setMinimumHeight(metrics["input_min_height"])
-        remote_layout.addWidget(self.password_input)
-
-        self.confirm_input = QLineEdit()
-        self.confirm_input.setPlaceholderText("Confirm password")
-        self.confirm_input.setEchoMode(QLineEdit.Password)
-        self.confirm_input.setMinimumHeight(metrics["input_min_height"])
-        remote_layout.addWidget(self.confirm_input)
-
-        helper = QLabel("Leave all three fields empty to disable phone authentication.")
-        helper.setObjectName("dialogSubtitle")
-        helper.setWordWrap(True)
-        helper.setFont(QFont("Sans Serif", metrics["helper_font"]))
-        remote_layout.addWidget(helper)
-
-        for section_id, panel in (
-            ("auto", auto_panel),
-            ("remote", remote_panel),
-        ):
-            self.section_panels[section_id] = panel
-            self.content_layout.addWidget(panel)
+        layout.addWidget(auto_panel, 1)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -3575,7 +3749,6 @@ class SettingsDialog(QDialog):
         layout.addLayout(button_row)
 
         self.setStyleSheet(dialog_stylesheet(metrics))
-        self.show_section("auto")
 
     def _style_settings_combo_popup(self, combo: QComboBox):
         popup = combo.view()
@@ -3591,14 +3764,6 @@ class SettingsDialog(QDialog):
             alternate-background-color: #10161d;
             """
         )
-
-    def show_section(self, section_id: str):
-        for key, panel in self.section_panels.items():
-            panel.setVisible(key == section_id)
-        for key, button in self.section_buttons.items():
-            button.setProperty("tileVariant", "accent" if key == section_id else "dialogSecondary")
-            button.style().unpolish(button)
-            button.style().polish(button)
 
     def values(self):
         selected_kind, selected_target = self.auto_launch_combo.currentData()
@@ -3621,6 +3786,10 @@ class LauncherWindow(QMainWindow):
         self.config_path = config_path
 
         self.config = load_config(config_path)
+        
+        # Auto-generate SSL certificates if not configured
+        self._ensure_ssl_certificates()
+        
         self.tiles = []
         self.tile_rows = []
         self.current_index = 0
@@ -3666,6 +3835,19 @@ class LauncherWindow(QMainWindow):
         self.ip_update_timer.setInterval(1000)
         self.ip_update_timer.timeout.connect(self.update_ip_label)
 
+        # Check SSL configuration and warn if not enabled
+        ws_config = self.config.get("websocket", {})
+        ssl_cert = ws_config.get("ssl_cert", "")
+        ssl_key = ws_config.get("ssl_key", "")
+        
+        if not ssl_cert or not ssl_key:
+            logging.warning(
+                "No HTTPS for WebSocket — the WebSocket server runs on plain ws:// (port %d), not wss://; "
+                "credentials traverse the local network unencrypted. "
+                "Set websocket.ssl_cert and websocket.ssl_key in config to enable WSS.",
+                ws_config.get("port", 8765)
+            )
+        
         self.ws_server = WebSocketControlServer(self)
         self.ws_server.start()
 
@@ -3912,6 +4094,55 @@ class LauncherWindow(QMainWindow):
             logging.error(f"Failed to update app: {e}")
             QMessageBox.critical(self, "Error", f"Failed to update app: {e}")
 
+    def _ensure_ssl_certificates(self):
+        """Ensure SSL certificates exist for WSS, generate self-signed if needed"""
+        ws_config = self.config.get("websocket", {})
+        ssl_cert = ws_config.get("ssl_cert", "")
+        ssl_key = ws_config.get("ssl_key", "")
+        
+        # If SSL is already configured, verify files exist
+        if ssl_cert and ssl_key:
+            if Path(ssl_cert).exists() and Path(ssl_key).exists():
+                logging.info("SSL certificates found at configured paths")
+                return
+            else:
+                logging.warning("Configured SSL certificates not found, will generate self-signed")
+        
+        # Generate self-signed certificates in app directory
+        cert_dir = Path(__file__).parent / "ssl"
+        cert_dir.mkdir(exist_ok=True)
+        
+        cert_path = cert_dir / "linuxtv-cert.pem"
+        key_path = cert_dir / "linuxtv-key.pem"
+        
+        # Check if already generated
+        if cert_path.exists() and key_path.exists():
+            logging.info("Found existing self-signed SSL certificates")
+            ssl_cert = str(cert_path)
+            ssl_key = str(key_path)
+        else:
+            logging.info("Generating self-signed SSL certificates for WSS...")
+            success, message = generate_self_signed_cert(cert_path, key_path)
+            if success:
+                ssl_cert = str(cert_path)
+                ssl_key = str(key_path)
+            else:
+                logging.warning("Failed to generate SSL certificates: %s", message)
+                return
+        
+        # Update config
+        if "websocket" not in self.config:
+            self.config["websocket"] = {}
+        self.config["websocket"]["ssl_cert"] = ssl_cert
+        self.config["websocket"]["ssl_key"] = ssl_key
+        
+        # Save config
+        try:
+            save_config(self.config_path, self.config)
+            logging.info("SSL configuration saved to config")
+        except Exception as e:
+            logging.error("Failed to save SSL config: %s", e)
+
     def setup_ui(self):
         self.ui_metrics = self.compute_ui_metrics()
         central = QWidget()
@@ -4107,18 +4338,33 @@ class LauncherWindow(QMainWindow):
         update_button.setMenu(update_menu)
         hero_top_row.addWidget(update_button)
 
-        settings_button = QToolButton()
-        settings_button.setObjectName("settingsButton")
-        settings_icon_path = resource_path("icons/settings.png")
-        if settings_icon_path.exists():
-            white_icon = create_white_icon(str(settings_icon_path), self.ui_metrics["settings_button_size"] - 8)
-            settings_button.setIcon(white_icon)
-            settings_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
-        settings_button.setToolTip("Open LinuxTV settings")
-        settings_button.setCursor(Qt.PointingHandCursor)
-        settings_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
-        settings_button.clicked.connect(self.open_remote_settings)
-        hero_top_row.addWidget(settings_button)
+        # Remote control button
+        remote_button = QToolButton()
+        remote_button.setObjectName("remoteButton")
+        remote_icon_path = resource_path("icons/remote.png")
+        if remote_icon_path.exists():
+            white_icon = create_white_icon(str(remote_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            remote_button.setIcon(white_icon)
+            remote_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
+        remote_button.setToolTip("Remote Control Settings")
+        remote_button.setCursor(Qt.PointingHandCursor)
+        remote_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        remote_button.clicked.connect(self.open_remote_settings)
+        hero_top_row.addWidget(remote_button)
+
+        # Auto-open button
+        auto_button = QToolButton()
+        auto_button.setObjectName("autoButton")
+        auto_icon_path = resource_path("icons/auto.png")
+        if auto_icon_path.exists():
+            white_icon = create_white_icon(str(auto_icon_path), self.ui_metrics["settings_button_size"] - 8)
+            auto_button.setIcon(white_icon)
+            auto_button.setIconSize(QSize(self.ui_metrics["settings_button_size"] - 8, self.ui_metrics["settings_button_size"] - 8))
+        auto_button.setToolTip("Auto-Open")
+        auto_button.setCursor(Qt.PointingHandCursor)
+        auto_button.setFixedSize(self.ui_metrics["settings_button_size"], self.ui_metrics["settings_button_size"])
+        auto_button.clicked.connect(self.open_settings)
+        hero_top_row.addWidget(auto_button)
         hero_layout.addLayout(hero_top_row)
         main_layout.addWidget(hero)
 
@@ -4194,19 +4440,35 @@ class LauncherWindow(QMainWindow):
                 border: none;
                 border-bottom: 1px solid rgba(48, 54, 61, 0.5);
             }
-            QToolButton#settingsButton {
+            QToolButton#remoteButton {
                 background: transparent;
                 color: #c9d1d9;
                 border: none;
                 font-size: __SETTINGS_FONT__px;
                 padding: 0;
             }
-            QToolButton#settingsButton:hover {
+            QToolButton#remoteButton:hover {
                 background: rgba(88, 166, 255, 0.15);
                 border-radius: __SETTINGS_RADIUS__px;
                 color: #58a6ff;
             }
-            QToolButton#settingsButton:pressed {
+            QToolButton#remoteButton:pressed {
+                background: rgba(88, 166, 255, 0.25);
+                border-radius: __SETTINGS_RADIUS__px;
+            }
+            QToolButton#autoButton {
+                background: transparent;
+                color: #c9d1d9;
+                border: none;
+                font-size: __SETTINGS_FONT__px;
+                padding: 0;
+            }
+            QToolButton#autoButton:hover {
+                background: rgba(88, 166, 255, 0.15);
+                border-radius: __SETTINGS_RADIUS__px;
+                color: #58a6ff;
+            }
+            QToolButton#autoButton:pressed {
                 background: rgba(88, 166, 255, 0.25);
                 border-radius: __SETTINGS_RADIUS__px;
             }
@@ -4663,7 +4925,7 @@ class LauncherWindow(QMainWindow):
             row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             row_scroll.setFixedHeight(self.ui_metrics["row_scroll_height"])
 
-            row_widget = QWidget()
+            row_widget = DropRowWidget(parent_handler=self.handle_row_card_drop)
             row_widget.setProperty("rowContent", "true")
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(
@@ -4702,6 +4964,8 @@ class LauncherWindow(QMainWindow):
                     lambda checked=False, item=current_app, kind=current_kind: self.toggle_favorite(item, kind),
                     lambda direction, item=current_app, kind=current_kind, idx=current_index: self.reorder_app(item, kind, direction, idx, current_entries),
                     metrics=self.ui_metrics,
+                    app_data=current_app,
+                    kind=current_kind,
                 )
                 
                 # Update favorite button state
@@ -4755,7 +5019,7 @@ class LauncherWindow(QMainWindow):
         add_row_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         add_row_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         add_row_scroll.setFixedHeight(self.ui_metrics["row_scroll_height"])
-        add_row_widget = QWidget()
+        add_row_widget = DropRowWidget(parent_handler=self.handle_row_card_drop)
         add_row_widget.setProperty("rowContent", "true")
         add_row_layout = QHBoxLayout(add_row_widget)
         add_row_layout.setContentsMargins(
@@ -5248,11 +5512,165 @@ class LauncherWindow(QMainWindow):
         # Refresh tiles immediately
         QTimer.singleShot(0, self.populate_tiles)
 
+    def handle_card_drop(self, source_data, target_app, target_kind):
+        """Handle drag-and-drop reordering of cards"""
+        import logging
+        source_kind = source_data.get("kind")
+        source_app_id = source_data.get("app_id")
+        
+        logging.info(f"handle_card_drop called: source={source_app_id} ({source_kind}), target={target_app} ({target_kind})")
+        
+        # Only allow reordering within the same collection
+        if source_kind != target_kind:
+            logging.info("Different kinds, skipping reorder")
+            return
+        
+        collection_name = "native_apps" if source_kind == "native" else "web_apps"
+        collection = self.config.get(collection_name, [])
+        
+        # Find source app by ID
+        source_app = None
+        for item in collection:
+            if source_kind == "native":
+                if item.get("cmd", "") == source_app_id:
+                    source_app = item
+                    break
+            else:
+                if item.get("url", "") == source_app_id:
+                    source_app = item
+                    break
+        
+        if not source_app:
+            return
+        
+        # Find indices in config
+        source_id = self.get_app_id(source_app)
+        target_id = self.get_app_id(target_app)
+        
+        source_index = -1
+        target_index = -1
+        
+        for i, item in enumerate(collection):
+            if self.get_app_id(item) == source_id:
+                source_index = i
+            if self.get_app_id(item) == target_id:
+                target_index = i
+        
+        if source_index == -1 or target_index == -1 or source_index == target_index:
+            logging.info(f"Invalid indices: source={source_index}, target={target_index}")
+            return
+        
+        logging.info(f"Swapping positions: {source_index} -> {target_index}")
+        
+        # Remove source from its position
+        source_item = collection.pop(source_index)
+        
+        # Adjust target index if source was before it
+        if source_index < target_index:
+            target_index -= 1
+        
+        # Insert source at target position
+        collection.insert(target_index, source_item)
+        
+        # Save config
+        self.config[collection_name] = collection
+        try:
+            save_config(self.config_path, self.config)
+            logging.info("Drag-drop reordered %s to position %d", source_app.get("name", ""), target_index)
+        except Exception as exc:
+            logging.exception("Failed to save config")
+            QMessageBox.critical(self, "Save Failed", f"Could not save config:\n{exc}")
+            return
+        
+        # Refresh tiles
+        QTimer.singleShot(0, self.populate_tiles)
+    
+    def handle_row_card_drop(self, event):
+        """Handle drop on row widget - find cards by position"""
+        import json
+        import logging
+        try:
+            data = json.loads(event.mimeData().text())
+            logging.info(f"Row drop event: {data}")
+            
+            if "app_id" not in data or "kind" not in data:
+                return
+            
+            source_app_id = data["app_id"]
+            source_kind = data["kind"]
+            
+            # Find which card we're dropping on based on event position
+            drop_pos = event.pos()
+            row_widget = self.sender()
+            
+            # Get all child cards
+            cards = []
+            for i in range(row_widget.layout().count()):
+                item = row_widget.layout().itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if isinstance(widget, AppCard) and widget.app_data:
+                        cards.append((widget, widget.x()))
+            
+            if not cards:
+                return
+            
+            # Sort cards by x position
+            cards.sort(key=lambda c: c[1])
+            
+            # Find the card at drop position
+            target_card = None
+            for card, x_pos in cards:
+                if drop_pos.x() >= x_pos and drop_pos.x() < x_pos + card.width():
+                    target_card = card
+                    break
+            
+            if not target_card:
+                # If no card found, use the last one
+                target_card = cards[-1][0]
+            
+            # Call the normal handler
+            self.handle_card_drop(data, target_card.app_data, target_card.kind)
+            
+        except (json.JSONDecodeError, KeyError) as e:
+            logging.error(f"Row drop error: {e}")
+
     def open_remote_settings(self):
+        """Open remote login credentials dialog"""
         auth = self.config.get("auth", {})
+        dialog = RemoteLoginDialog(
+            auth.get("username", ""),
+            self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        values = dialog.values()
+        username = values["username"]
+        password = values["password"]
+        confirm_password = values["confirm_password"]
+
+        # Validate and save remote credentials
+        if username or password or confirm_password:
+            if not username:
+                QMessageBox.information(self, "Invalid Input", "Username is required.")
+                return
+            if password != confirm_password:
+                QMessageBox.information(self, "Password Mismatch", "Passwords do not match.")
+                return
+            if len(password) < 4:
+                QMessageBox.information(self, "Weak Password", "Password must be at least 4 characters.")
+                return
+
+        # Hash and save credentials
+        self.config["auth"] = hash_remote_credentials(username, password)
+        save_config(self.config_path, self.config)
+        QMessageBox.information(self, "Saved", "Remote login credentials updated.")
+
+    def open_settings(self):
+        """Open application settings dialog"""
         auto_launch = self.config.get("auto_launch", {})
         dialog = SettingsDialog(
-            auth.get("username", ""),
             auto_launch,
             self.get_auto_launch_options(),
             self,
@@ -5276,29 +5694,6 @@ class LauncherWindow(QMainWindow):
             "app_target": values["auto_launch_app_target"],
             "delay_seconds": auto_launch_delay_seconds,
         }
-        username = values["username"]
-        password = values["password"]
-        confirm_password = values["confirm_password"]
-
-        if username or password or confirm_password:
-            if not username or not password:
-                QMessageBox.information(self, "Missing Details", "Enter both a username and password, or leave all fields blank to disable authentication.")
-                return
-            if password != confirm_password:
-                QMessageBox.information(self, "Password Mismatch", "The passwords do not match.")
-                return
-            # Generate PBKDF2 hash for secure storage
-            password_hash, password_salt = hash_remote_password(password)
-            # Generate simple SHA-256 hash for challenge-response authentication
-            password_simple_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-            self.config["auth"] = {
-                "username": username,
-                "password_hash": password_hash,
-                "password_salt": password_salt,
-                "password_simple_hash": password_simple_hash,
-            }
-        else:
-            self.config["auth"] = dict(DEFAULT_CONFIG["auth"])
 
         try:
             save_config(self.config_path, self.config)
@@ -5308,10 +5703,7 @@ class LauncherWindow(QMainWindow):
             return
 
         self.reset_auto_launch_timer()
-        if remote_auth_enabled(self.config):
-            QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is enabled for LinuxTV Remote.")
-        else:
-            QMessageBox.information(self, "Saved", "Settings saved. Phone authentication is disabled.")
+        QMessageBox.information(self, "Saved", "Settings saved.")
 
     def open_network_settings(self):
         """Open the Network settings dialog"""
