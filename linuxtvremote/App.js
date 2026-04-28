@@ -4,7 +4,6 @@ import { StyleSheet, Text, View, Pressable, TextInput, Alert } from 'react-nativ
 export default function App() {
   const [ip, setIp] = useState('192.168.1.100');
   const [port, setPort] = useState('8765');
-  const [useSSL, setUseSSL] = useState(true);
   const [status, setStatus] = useState('Disconnected');
   const ws = useRef(null);
 
@@ -20,9 +19,8 @@ export default function App() {
 
     try {
       setStatus('Connecting...');
-      const protocol = useSSL ? 'wss' : 'ws';
-      const url = `${protocol}://${ip}:${port}`;
-      console.log(`Connecting to ${url} (${useSSL ? 'encrypted' : 'unencrypted'})`);
+      const url = `ws://${ip}:${port}`;
+      console.log(`Connecting to ${url}`);
       
       ws.current = new WebSocket(url);
 
@@ -80,15 +78,6 @@ export default function App() {
         keyboardType="numeric"
       />
       
-      <Pressable 
-        style={[styles.sslToggle, useSSL ? styles.sslToggleOn : styles.sslToggleOff]} 
-        onPress={() => setUseSSL(!useSSL)}
-      >
-        <Text style={styles.sslToggleText}>
-          {useSSL ? '🔒 WSS (Encrypted)' : '⚠️ WS (Unencrypted)'}
-        </Text>
-      </Pressable>
-      
       <Pressable style={styles.connectBtn} onPress={connect}>
         <Text style={styles.connectText}>Connect</Text>
       </Pressable>
@@ -120,10 +109,6 @@ const styles = StyleSheet.create({
   online: {color: '#1eb300'},
   offline: {color: '#ff4757'},
   input: {width: '90%', height: 48, borderColor: '#3a3f53', borderWidth: 1, borderRadius: 12, color: '#fff', paddingHorizontal: 12, marginBottom: 12},
-  sslToggle: {width: '90%', height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 2},
-  sslToggleOn: {backgroundColor: '#1a4d2e', borderColor: '#2ecc71'},
-  sslToggleOff: {backgroundColor: '#4d1a1a', borderColor: '#e74c3c'},
-  sslToggleText: {fontSize: 16, fontWeight: '700', color: '#fff'},
   connectBtn: {width: '60%', height: 44, backgroundColor: '#2a71ff', borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 28},
   connectText: {color: '#fff', fontSize: 16, fontWeight: '700'},
   padRow: {flexDirection: 'row', justifyContent: 'center', width: '100%', marginVertical: 8},
