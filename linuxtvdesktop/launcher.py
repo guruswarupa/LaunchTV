@@ -177,8 +177,6 @@ DEFAULT_CONFIG = {
     "websocket": {
         "host": "0.0.0.0",
         "port": 8765,
-        "ssl_cert": "",  # Path to SSL certificate file
-        "ssl_key": "",   # Path to SSL private key file
     },
     "auto_launch": {
         "app_kind": "",
@@ -1334,31 +1332,6 @@ def request_system_update():
         return False, f"Failed to start update: {e}"
 
 
-def generate_self_signed_cert(cert_path, key_path):
-    """Generate a self-signed SSL certificate for WSS"""
-    try:
-        openssl = shutil.which("openssl")
-        if not openssl:
-            logging.warning("openssl not found, cannot generate self-signed certificate")
-            return False, "openssl not found"
-        
-        # Generate self-signed certificate
-        subprocess.run([
-            openssl, "req", "-x509", "-newkey", "rsa:4096",
-            "-keyout", str(key_path),
-            "-out", str(cert_path),
-            "-days", "3650",
-            "-nodes",
-            "-subj", "/C=US/ST=State/L=City/O=LinuxTV/CN=linuxtv.local"
-        ], check=True, capture_output=True)
-        
-        logging.info("Generated self-signed SSL certificate: %s", cert_path)
-        return True, "Certificate generated successfully"
-    except Exception as e:
-        logging.exception("Failed to generate self-signed certificate")
-        return False, f"Failed to generate certificate: {e}"
-
-
 class InputDeviceGrabber(threading.Thread):
     """Captures input events from remote control devices system-wide using evdev."""
     
@@ -1508,7 +1481,7 @@ class InputDeviceGrabber(threading.Thread):
 
 
 class WebSocketControlServer(threading.Thread):
-    def __init__(self, window, host=None, port=None, ssl_cert=None, ssl_key=None):
+    def __init__(self, window, host=None, port=None):
         super().__init__(daemon=True)
         self.window = window
         # Default to 0.0.0.0 to allow remote connections, allow override via config
@@ -1517,11 +1490,6 @@ class WebSocketControlServer(threading.Thread):
         config_port = ws_config.get("port", 8765)
         self.host = host if host is not None else config_host
         self.port = port if port is not None else config_port
-        
-        # SSL/TLS configuration
-        self.ssl_cert = ssl_cert or ws_config.get("ssl_cert")
-        self.ssl_key = ssl_key or ws_config.get("ssl_key")
-        self.use_ssl = bool(self.ssl_cert and self.ssl_key)
         
         self.loop = None
         self.server = None
@@ -2062,32 +2030,13 @@ class WebSocketControlServer(threading.Thread):
             logging.error("websockets library not installed; remote control disabled")
             return
         
-        # Configure SSL if certificates are provided
-        ssl_context = None
-        if self.use_ssl:
-            try:
-                import ssl
-                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-                ssl_context.load_cert_chain(self.ssl_cert, self.ssl_key)
-                # Use modern TLS settings
-                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-                ssl_context.set_ciphers('ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20')
-                logging.info("WebSocket server will use WSS (TLS encrypted)")
-            except Exception as e:
-                logging.error("Failed to load SSL certificates: %s", e)
-                logging.warning("Falling back to unencrypted WS")
-                self.use_ssl = False
-                ssl_context = None
-        
         self.server = await websockets.serve(
             self.handler, 
             self.host, 
-            self.port,
-            ssl=ssl_context
+            self.port
         )
         
-        protocol = "wss" if self.use_ssl else "ws"
-        logging.info("WebSocket remote server started on %s://%s:%s", protocol, self.host, self.port)
+        logging.info("WebSocket remote server started on ws://%s:%s", self.host, self.port)
         try:
             await self.server.wait_closed()
         except asyncio.CancelledError:
@@ -3787,9 +3736,6 @@ class LauncherWindow(QMainWindow):
 
         self.config = load_config(config_path)
         
-        # Auto-generate SSL certificates if not configured
-        self._ensure_ssl_certificates()
-        
         self.tiles = []
         self.tile_rows = []
         self.current_index = 0
@@ -4093,55 +4039,6 @@ class LauncherWindow(QMainWindow):
         except Exception as e:
             logging.error(f"Failed to update app: {e}")
             QMessageBox.critical(self, "Error", f"Failed to update app: {e}")
-
-    def _ensure_ssl_certificates(self):
-        """Ensure SSL certificates exist for WSS, generate self-signed if needed"""
-        ws_config = self.config.get("websocket", {})
-        ssl_cert = ws_config.get("ssl_cert", "")
-        ssl_key = ws_config.get("ssl_key", "")
-        
-        # If SSL is already configured, verify files exist
-        if ssl_cert and ssl_key:
-            if Path(ssl_cert).exists() and Path(ssl_key).exists():
-                logging.info("SSL certificates found at configured paths")
-                return
-            else:
-                logging.warning("Configured SSL certificates not found, will generate self-signed")
-        
-        # Generate self-signed certificates in app directory
-        cert_dir = Path(__file__).parent / "ssl"
-        cert_dir.mkdir(exist_ok=True)
-        
-        cert_path = cert_dir / "linuxtv-cert.pem"
-        key_path = cert_dir / "linuxtv-key.pem"
-        
-        # Check if already generated
-        if cert_path.exists() and key_path.exists():
-            logging.info("Found existing self-signed SSL certificates")
-            ssl_cert = str(cert_path)
-            ssl_key = str(key_path)
-        else:
-            logging.info("Generating self-signed SSL certificates for WSS...")
-            success, message = generate_self_signed_cert(cert_path, key_path)
-            if success:
-                ssl_cert = str(cert_path)
-                ssl_key = str(key_path)
-            else:
-                logging.warning("Failed to generate SSL certificates: %s", message)
-                return
-        
-        # Update config
-        if "websocket" not in self.config:
-            self.config["websocket"] = {}
-        self.config["websocket"]["ssl_cert"] = ssl_cert
-        self.config["websocket"]["ssl_key"] = ssl_key
-        
-        # Save config
-        try:
-            save_config(self.config_path, self.config)
-            logging.info("SSL configuration saved to config")
-        except Exception as e:
-            logging.error("Failed to save SSL config: %s", e)
 
     def setup_ui(self):
         self.ui_metrics = self.compute_ui_metrics()
